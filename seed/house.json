@@ -388,7 +388,9 @@
    "id": "w-bedroom-dust-all-surfaces",
    "title": "Dust all surfaces",
    "room": "bedroom",
-   "freq": "weekly"
+   "freq": "weekly",
+   "zone": "B",
+   "fixedOwner": "cass"
   },
   {
    "id": "w-bedroom-clean-mirrors",
@@ -406,19 +408,25 @@
    "id": "w-bedroom-wash-bedding",
    "title": "Wash bedding",
    "room": "bedroom",
-   "freq": "weekly"
+   "freq": "weekly",
+   "zone": "B",
+   "fixedOwner": "cass"
   },
   {
    "id": "w-bedroom-remake-bed",
    "title": "Remake bed",
    "room": "bedroom",
-   "freq": "weekly"
+   "freq": "weekly",
+   "zone": "B",
+   "fixedOwner": "cass"
   },
   {
    "id": "w-bedroom-vacuum-floor-under-behind-bed",
    "title": "Vacuum floor, under & behind bed",
    "room": "bedroom",
-   "freq": "weekly"
+   "freq": "weekly",
+   "zone": "A",
+   "fixedOwner": "grant"
   },
   {
    "id": "w-office-grant-dust-all-surfaces",
@@ -541,8 +549,7 @@
    "id": "w-yard-refill-birdseed",
    "title": "Refill birdseed",
    "room": "yard",
-   "freq": "weekly",
-   "prn": true
+   "freq": "weekly"
   },
   {
    "id": "m-kitchen-clean-inside-microwave",
@@ -698,7 +705,9 @@
    "id": "m-bedroom-dust-ceiling-fan-blinds",
    "title": "Dust ceiling fan & blinds",
    "room": "bedroom",
-   "freq": "monthly"
+   "freq": "monthly",
+   "zone": "B",
+   "fixedOwner": "cass"
   },
   {
    "id": "m-bedroom-wash-foster-s-bed",
@@ -969,7 +978,7 @@
    "id": "s-yard-mow-lawn",
    "title": "Mow lawn",
    "room": "yard",
-   "freq": "seasonal",
+   "freq": "weekly",
    "prn": true,
    "months": [
     4,
@@ -979,7 +988,10 @@
     8,
     9,
     10
-   ]
+   ],
+   "owner": "grant",
+   "effort": 3,
+   "note": "About 3 hours. Fine to do after dark with a headlamp."
   },
   {
    "id": "s-yard-rake-or-mulch-leaves",

@@ -51,7 +51,8 @@ Both phones use the same "household key" (Grant's fine-grained GitHub token). Ca
 
 ## Where the starting data came from
 
-- Weekly and monthly chores: the laminated apartment charts, remapped to Lovetta rooms
+- Weekly and monthly chores: Cass's laminated charts (Drive → 772 Lovetta → MAINTENANCE), remapped to Lovetta rooms. Her room assignments are the "Keep rooms" owners, and her bedroom split (Cass: bed and dusting; Grant: vacuuming) carries into both modes. Additions beyond her charts: trash/recycling, bins, studio, garage, guest room, nursery, a few monthly deep-clean items, and the seasonal list.
+- Lawn mowing is always Grant's: weekly as needed, April through October.
 - Projects: the House To-Do Google Sheet (141 rows, imported Oct 12, 2026), stored only in the private data repo. The public seed is empty on purpose. The app is now the source of truth.
 - Seasonal list: a starter set (furnace filter, gutters, spigots, dryer vent, etc.). Edit freely.
 - `seed/` holds that starting data. The app copies it into the data repo the first time it finds a file missing.

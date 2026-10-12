@@ -14,7 +14,7 @@ A household chore and project app for Grant and Cass. It's a static React 19 + T
 
 | File | Shape |
 |---|---|
-| `house.json` | `{rooms: Room[], chores: Chore[]}`. A room has `zone` A/B/shared for rotation, `fixedOwner` for keep-rooms mode, and `pinned` to never rotate. A chore has `freq` weekly/monthly/seasonal, `months` (seasonal only), `prn` (as needed), an optional permanent `owner`, `standard` ("done means", plus `standardBy`/`standardAt`), and `effort` 1–3. |
+| `house.json` | `{rooms: Room[], chores: Chore[]}`. A room has `zone` A/B/shared for rotation, `fixedOwner` for keep-rooms mode, and `pinned` to never rotate. A chore has `freq` weekly/monthly/seasonal, `months` (seasonal only), `prn` (as needed), an optional permanent `owner`, optional `zone`/`fixedOwner` to split one room's chores between people, `months` (also allowed on weekly/monthly chores to limit them to a season, e.g. mowing), `standard` ("done means", plus `standardBy`/`standardAt`), and `effort` 1–3. |
 | `settings.json` also has | `colors[person]` (ink id from `INKS`) and `lastCheckin {at, by, week}` |
 | `settings.json` | `mode` rotate/fixed, `rotation.anchorWeek`/`anchorMonth`/`zoneAStarts` |
 | `log.json` | `done["<period>|<choreId>"] = {by, at}`. Period is `W<monday yyyy-mm-dd>` or `M<yyyy-mm>`. Pruned after 400 days. |

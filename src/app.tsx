@@ -38,6 +38,9 @@ interface Chore {
   standardAt?: string;
   /** 1 quick, 2 medium (default), 3 big. Drives the fairness balance. */
   effort?: 1 | 2 | 3;
+  /** Split a room's chores between you: overrides the room's side / keep-rooms owner. */
+  zone?: Zone;
+  fixedOwner?: Owner;
 }
 interface House { version: number; rooms: Room[]; chores: Chore[] }
 interface Settings {
@@ -289,9 +292,18 @@ function roomOwner(room: Room | undefined, settings: Settings, freq: Freq, now: 
   return room.zone === "A" ? a : other(a);
 }
 function baseOwner(c: Chore, rooms: Map<string, Room>, settings: Settings, now: Date): Owner {
-  return c.owner ?? roomOwner(rooms.get(c.room), settings, c.freq, now);
+  if (c.owner) return c.owner;
+  const room = rooms.get(c.room);
+  if (!room || (!c.zone && !c.fixedOwner)) return roomOwner(room, settings, c.freq, now);
+  return roomOwner({ ...room, zone: c.zone ?? room.zone, fixedOwner: c.fixedOwner ?? room.fixedOwner }, settings, c.freq, now);
 }
-const isDue = (c: Chore, now: Date) => c.freq !== "seasonal" || !!c.months?.includes(now.getMonth() + 1);
+/** Seasonal chores need months; weekly/monthly chores can optionally be limited to some months (mowing). */
+const isDue = (c: Chore, now: Date) => c.months?.length ? c.months.includes(now.getMonth() + 1) : c.freq !== "seasonal";
+function monthRange(ms: number[]): string {
+  const sorted = [...ms].sort((a, b) => a - b);
+  const contiguous = sorted.every((m, i) => i === 0 || m === sorted[i - 1] + 1);
+  return contiguous && sorted.length > 2 ? `${MONTHS[sorted[0] - 1]}–${MONTHS[sorted[sorted.length - 1] - 1]}` : sorted.map((m) => MONTHS[m - 1]).join(", ");
+}
 const effortOf = (c: Chore) => c.effort ?? 2;
 const EFFORT_NAME = ["", "Quick", "Medium", "Big"];
 const projectWeight = (p: Project) => [0, 5, 4, 3, 2, 1][p.effort] ?? 3;
@@ -581,7 +593,13 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
     settings(fn: (s: Settings) => Settings, msg: string) { mutate("settings", fn, `${N} ${msg}`); },
     lockSplit(now: Date) {
       const owners = new Map(data.house.rooms.map((r) => [r.id, roomOwner(r, data.settings, "weekly", now)]));
-      mutate("house", (d) => { d.rooms.forEach((r) => { const o = owners.get(r.id); if (o) r.fixedOwner = o; }); return d; }, `${N} kept this week's room split`);
+      const rooms = new Map(data.house.rooms.map((r) => [r.id, r]));
+      const split = new Map(data.house.chores.filter((c) => c.zone && !c.owner).map((c) => [c.id, baseOwner(c, rooms, data.settings, now)]));
+      mutate("house", (d) => {
+        d.rooms.forEach((r) => { const o = owners.get(r.id); if (o) r.fixedOwner = o; });
+        d.chores.forEach((c) => { const o = split.get(c.id); if (o) c.fixedOwner = o; });
+        return d;
+      }, `${N} kept this week's room split`);
       mutate("settings", (d) => ({ ...d, mode: "fixed" }), `${N} switched to keeping rooms`);
       toast("Rooms will stay put until you switch back");
     },
@@ -781,9 +799,10 @@ function TodayView() {
   const today = dayKey(now);
   const all = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
   const mine = all.filter((i) => isFor(i.owner, me));
-  const open = mine.filter((i) => !i.mark && !i.skipped && !i.c.prn);
-  const todays = open.filter((i) => i.plan?.day === today);
-  const overdue = open.filter((i) => i.plan?.day && i.plan.day < today);
+  const pending = mine.filter((i) => !i.mark && !i.skipped);
+  const open = pending.filter((i) => !i.c.prn);
+  const todays = pending.filter((i) => i.plan?.day === today);
+  const overdue = pending.filter((i) => i.plan?.day && i.plan.day < today);
   const unplannedWeek = open.filter((i) => !i.plan?.day && i.c.freq === "weekly");
   const unplannedMonth = open.filter((i) => !i.plan?.day && i.c.freq !== "weekly");
   const doneToday = all.filter((i) => i.mark && dayKey(new Date(i.mark.at)) === today && isFor(i.owner, me));
@@ -1043,7 +1062,8 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
   const pending = data.activity.items.find((a) => a.kind === "request" && a.status === "open" && a.ref?.id === c.id && a.ref.period === i.period);
   const thanked = i.mark && data.activity.items.some((a) => a.kind === "kudos" && a.by === me && a.ref?.id === c.id && a.ref.period === i.period);
   const days = c.freq === "weekly" ? weekDays(now) : weekDays(now).filter((d) => d.getMonth() === now.getMonth());
-  const freqLabel = c.freq === "weekly" ? "Every week" : c.freq === "monthly" ? "Every month" : `In ${c.months?.map((m) => MONTHS[m - 1]).join(", ")}`;
+  const span = c.months?.length ? monthRange(c.months) : "";
+  const freqLabel = c.freq === "weekly" ? `Every week${span ? `, ${span}` : ""}` : c.freq === "monthly" ? `Every month${span ? `, ${span}` : ""}` : `In ${span}`;
 
   return (
     <Sheet title={c.title} onClose={onClose}>
@@ -1798,7 +1818,7 @@ function Editor({ onClose, startChore }: { onClose: () => void; startChore?: Cho
                 {items.map((c) => (
                   <li key={c.id}><button type="button" onClick={() => setEditing(c)}>
                     <span>{c.title}</span>
-                    <span className="soft">{[c.prn && "as needed", c.months && c.months.map((m) => MONTHS[m - 1]).join(", "), c.owner && `always ${NAME[c.owner]}`, EFFORT_NAME[effortOf(c)]].filter(Boolean).join("; ")}</span>
+                    <span className="soft">{[c.prn && "as needed", c.months?.length && monthRange(c.months), c.owner && `always ${NAME[c.owner]}`, EFFORT_NAME[effortOf(c)]].filter(Boolean).join("; ")}</span>
                   </button></li>
                 ))}
               </ul>
@@ -1816,13 +1836,14 @@ function ChoreForm({ c, rooms, isNew, onSave, onDelete, onClose }: {
 }) {
   const [f, setF] = useState<Chore>(c);
   const [err, setErr] = useState<string | null>(null);
+  const [limit, setLimit] = useState(() => c.freq !== "seasonal" && !!c.months?.length);
   const set = <K extends keyof Chore>(k: K, v: Chore[K]) => setF((x) => ({ ...x, [k]: v }));
   const toggleMonth = (m: number) => { const ms = new Set(f.months ?? []); ms.has(m) ? ms.delete(m) : ms.add(m); set("months", [...ms].sort((a, b) => a - b)); };
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!f.title.trim()) return;
     const out: Chore = { ...f, title: f.title.trim() };
-    if (out.freq !== "seasonal") delete out.months;
+    if (out.freq !== "seasonal" && !limit) delete out.months;
     else if (!out.months?.length) { setErr("Pick at least one month."); return; }
     if (!out.prn) delete out.prn;
     if (!out.owner) delete out.owner;
@@ -1839,7 +1860,10 @@ function ChoreForm({ c, rooms, isNew, onSave, onDelete, onClose }: {
             <option value="weekly">Every week</option><option value="monthly">Every month</option><option value="seasonal">Certain months</option>
           </select>
         </label>
-        {f.freq === "seasonal" && (
+        {f.freq !== "seasonal" && (
+          <label className="inline"><input type="checkbox" checked={limit} onChange={(e) => setLimit(e.target.checked)} />Only in certain months (like mowing)</label>
+        )}
+        {(f.freq === "seasonal" || limit) && (
           <fieldset className="months"><legend>Months</legend>
             {MONTHS.map((m, i) => <button key={m} type="button" aria-pressed={!!f.months?.includes(i + 1)} className={f.months?.includes(i + 1) ? "chip chip-on" : "chip"} onClick={() => toggleMonth(i + 1)}>{m}</button>)}
           </fieldset>
