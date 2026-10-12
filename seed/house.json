@@ -1,0 +1,1081 @@
+{
+ "version": 1,
+ "rooms": [
+  {
+   "id": "kitchen",
+   "name": "Kitchen",
+   "area": "Main floor",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "living",
+   "name": "Living room",
+   "area": "Main floor",
+   "zone": "B",
+   "fixedOwner": "cass"
+  },
+  {
+   "id": "dining",
+   "name": "Dining room",
+   "area": "Main floor",
+   "zone": "B",
+   "fixedOwner": "cass"
+  },
+  {
+   "id": "entry",
+   "name": "Entry & hallway",
+   "area": "Main floor",
+   "zone": "B",
+   "fixedOwner": "cass"
+  },
+  {
+   "id": "pink-bath",
+   "name": "Pink bathroom",
+   "area": "Bed & bath",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "green-bath",
+   "name": "Green bathroom",
+   "area": "Bed & bath",
+   "zone": "B",
+   "fixedOwner": "cass"
+  },
+  {
+   "id": "bedroom",
+   "name": "Bedroom",
+   "area": "Bed & bath",
+   "zone": "shared",
+   "fixedOwner": "both"
+  },
+  {
+   "id": "office-grant",
+   "name": "Grant's office",
+   "area": "Bed & bath",
+   "zone": "A",
+   "fixedOwner": "grant",
+   "pinned": true
+  },
+  {
+   "id": "office-cass",
+   "name": "Cass's office",
+   "area": "Bed & bath",
+   "zone": "B",
+   "fixedOwner": "cass",
+   "pinned": true
+  },
+  {
+   "id": "guest",
+   "name": "Guest room",
+   "area": "Bed & bath",
+   "zone": "B",
+   "fixedOwner": "cass"
+  },
+  {
+   "id": "nursery",
+   "name": "Nursery",
+   "area": "Bed & bath",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "laundry",
+   "name": "Laundry & utility",
+   "area": "Basement",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "studio",
+   "name": "Studio & lounge",
+   "area": "Basement",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "garage",
+   "name": "Garage & gym",
+   "area": "Outside",
+   "zone": "A",
+   "fixedOwner": "grant"
+  },
+  {
+   "id": "yard",
+   "name": "Patio & yard",
+   "area": "Outside",
+   "zone": "B",
+   "fixedOwner": "cass"
+  }
+ ],
+ "chores": [
+  {
+   "id": "w-kitchen-put-away-dishes",
+   "title": "Put away dishes",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-wipe-counters-stove",
+   "title": "Wipe counters & stove",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-wipe-microwave",
+   "title": "Wipe microwave",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-wipe-fridge",
+   "title": "Wipe fridge",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-clean-air-fryer",
+   "title": "Clean air fryer",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-throw-out-expired-food",
+   "title": "Throw out expired food",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-sweep-floor",
+   "title": "Sweep floor",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-wipe-baseboards",
+   "title": "Wipe baseboards",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-take-out-trash-recycling",
+   "title": "Take out trash & recycling",
+   "room": "kitchen",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-kitchen-tidy-cabinets",
+   "title": "Tidy cabinets",
+   "room": "kitchen",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-kitchen-refill-soap",
+   "title": "Refill soap",
+   "room": "kitchen",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-living-dust-all-surfaces",
+   "title": "Dust all surfaces",
+   "room": "living",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-living-vacuum-couch",
+   "title": "Vacuum couch",
+   "room": "living",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-living-comb-dog-hair-from-couch",
+   "title": "Comb dog hair from couch",
+   "room": "living",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-living-tidy-game-cabinet",
+   "title": "Tidy game cabinet",
+   "room": "living",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-living-vacuum-floor",
+   "title": "Vacuum floor",
+   "room": "living",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-dining-dust-all-surfaces",
+   "title": "Dust all surfaces",
+   "room": "dining",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-dining-vacuum-floor",
+   "title": "Vacuum floor",
+   "room": "dining",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-dining-clean-inner-patio-door",
+   "title": "Clean inner patio door",
+   "room": "dining",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-sweep-entryway",
+   "title": "Sweep entryway",
+   "room": "entry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-vacuum-hallway",
+   "title": "Vacuum hallway",
+   "room": "entry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-tidy-hanging-items-shoes",
+   "title": "Tidy hanging items & shoes",
+   "room": "entry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-clean-scuff-marks-from-walls",
+   "title": "Clean scuff marks from walls",
+   "room": "entry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-tidy-med-cart-note-refills",
+   "title": "Tidy med cart, note refills",
+   "room": "entry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-entry-restock-towels",
+   "title": "Restock towels",
+   "room": "entry",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-entry-comb-dog-hair-from-hallway",
+   "title": "Comb dog hair from hallway",
+   "room": "entry",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-pink-bath-clean-toilet-exterior",
+   "title": "Clean toilet exterior",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-clean-sink-counter",
+   "title": "Clean sink & counter",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-clean-mirrors",
+   "title": "Clean mirrors",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-wipe-shower-spills",
+   "title": "Wipe shower spills",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-tidy-below-sink",
+   "title": "Tidy below sink",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-sweep-floor",
+   "title": "Sweep floor",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-wipe-baseboards",
+   "title": "Wipe baseboards",
+   "room": "pink-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-pink-bath-scrub-toilet",
+   "title": "Scrub toilet",
+   "room": "pink-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-pink-bath-refill-soap",
+   "title": "Refill soap",
+   "room": "pink-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-pink-bath-empty-trash",
+   "title": "Empty trash",
+   "room": "pink-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-green-bath-clean-toilet-exterior",
+   "title": "Clean toilet exterior",
+   "room": "green-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-green-bath-clean-sink-counter",
+   "title": "Clean sink & counter",
+   "room": "green-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-green-bath-clean-mirrors",
+   "title": "Clean mirrors",
+   "room": "green-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-green-bath-sweep-floor",
+   "title": "Sweep floor",
+   "room": "green-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-green-bath-wipe-baseboards",
+   "title": "Wipe baseboards",
+   "room": "green-bath",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-green-bath-scrub-toilet",
+   "title": "Scrub toilet",
+   "room": "green-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-green-bath-refill-soap",
+   "title": "Refill soap",
+   "room": "green-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-green-bath-empty-trash",
+   "title": "Empty trash",
+   "room": "green-bath",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-bedroom-dust-all-surfaces",
+   "title": "Dust all surfaces",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-bedroom-clean-mirrors",
+   "title": "Clean mirrors",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-bedroom-wash-out-foster-s-water-bowl",
+   "title": "Wash out Foster's water bowl",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-bedroom-wash-bedding",
+   "title": "Wash bedding",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-bedroom-remake-bed",
+   "title": "Remake bed",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-bedroom-vacuum-floor-under-behind-bed",
+   "title": "Vacuum floor, under & behind bed",
+   "room": "bedroom",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-grant-dust-all-surfaces",
+   "title": "Dust all surfaces",
+   "room": "office-grant",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-grant-vacuum-floor",
+   "title": "Vacuum floor",
+   "room": "office-grant",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-grant-tidy-up",
+   "title": "Tidy up",
+   "room": "office-grant",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-grant-update-door-calendar",
+   "title": "Update door calendar",
+   "room": "office-grant",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-office-cass-dust-all-surfaces",
+   "title": "Dust all surfaces",
+   "room": "office-cass",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-cass-vacuum-floor",
+   "title": "Vacuum floor",
+   "room": "office-cass",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-cass-tidy-bookshelf",
+   "title": "Tidy bookshelf",
+   "room": "office-cass",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-cass-tidy-desk",
+   "title": "Tidy desk",
+   "room": "office-cass",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-office-cass-update-calendars",
+   "title": "Update calendars",
+   "room": "office-cass",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-laundry-tidy-cleaning-supplies",
+   "title": "Tidy cleaning supplies",
+   "room": "laundry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-laundry-wipe-down-washer-dryer",
+   "title": "Wipe down washer & dryer",
+   "room": "laundry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-laundry-empty-wipe-vacuum-after-cleaning",
+   "title": "Empty & wipe vacuum after cleaning",
+   "room": "laundry",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-laundry-empty-trash",
+   "title": "Empty trash",
+   "room": "laundry",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "w-studio-reset-lounge-blankets-cups-cables",
+   "title": "Reset lounge (blankets, cups, cables)",
+   "room": "studio",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-studio-tidy-music-space",
+   "title": "Tidy music space",
+   "room": "studio",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-yard-pick-up-dog-droppings",
+   "title": "Pick up dog droppings",
+   "room": "yard",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-yard-clean-outer-patio-door",
+   "title": "Clean outer patio door",
+   "room": "yard",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-yard-bins-to-curb-back",
+   "title": "Bins to curb & back",
+   "room": "yard",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-yard-pick-aberrant-weeds",
+   "title": "Pick aberrant weeds",
+   "room": "yard",
+   "freq": "weekly"
+  },
+  {
+   "id": "w-yard-refill-birdseed",
+   "title": "Refill birdseed",
+   "room": "yard",
+   "freq": "weekly",
+   "prn": true
+  },
+  {
+   "id": "m-kitchen-clean-inside-microwave",
+   "title": "Clean inside microwave",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-clean-out-fridge-freezer",
+   "title": "Clean out fridge & freezer",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-wipe-pantry-shelves",
+   "title": "Wipe pantry shelves",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-degrease-range-hood-filter",
+   "title": "Degrease range hood & filter",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-clean-garbage-disposal",
+   "title": "Clean garbage disposal",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-wash-trash-can",
+   "title": "Wash trash can",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-kitchen-mop-floor",
+   "title": "Mop floor",
+   "room": "kitchen",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-living-dust-blinds-window-sills",
+   "title": "Dust blinds & window sills",
+   "room": "living",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-living-clean-ceiling-fan",
+   "title": "Clean ceiling fan",
+   "room": "living",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-living-wipe-light-switches-doorknobs",
+   "title": "Wipe light switches & doorknobs",
+   "room": "living",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-living-water-plants",
+   "title": "Water plants",
+   "room": "living",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-dining-clean-ceiling-fan-light-fixture",
+   "title": "Clean ceiling fan & light fixture",
+   "room": "dining",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-dining-dust-blinds-window-sills",
+   "title": "Dust blinds & window sills",
+   "room": "dining",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-entry-wipe-front-door-glass",
+   "title": "Wipe front door & glass",
+   "room": "entry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-entry-wipe-light-switches-doorknobs",
+   "title": "Wipe light switches & doorknobs",
+   "room": "entry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-entry-dust-closet-shelves",
+   "title": "Dust closet shelves",
+   "room": "entry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-pink-bath-scrub-shower-tile",
+   "title": "Scrub shower & tile",
+   "room": "pink-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-pink-bath-mop-floor",
+   "title": "Mop floor",
+   "room": "pink-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-pink-bath-wash-bath-mat",
+   "title": "Wash bath mat",
+   "room": "pink-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-pink-bath-clean-behind-toilet-base",
+   "title": "Clean behind toilet base",
+   "room": "pink-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-pink-bath-dust-vent-fan-cover",
+   "title": "Dust vent fan cover",
+   "room": "pink-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-green-bath-mop-floor",
+   "title": "Mop floor",
+   "room": "green-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-green-bath-wash-bath-mat",
+   "title": "Wash bath mat",
+   "room": "green-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-green-bath-clean-behind-toilet-base",
+   "title": "Clean behind toilet base",
+   "room": "green-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-green-bath-dust-vent-fan-cover",
+   "title": "Dust vent fan cover",
+   "room": "green-bath",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-bedroom-dust-ceiling-fan-blinds",
+   "title": "Dust ceiling fan & blinds",
+   "room": "bedroom",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-bedroom-wash-foster-s-bed",
+   "title": "Wash Foster's bed",
+   "room": "bedroom",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-bedroom-wipe-light-switches-doorknobs",
+   "title": "Wipe light switches & doorknobs",
+   "room": "bedroom",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-office-grant-organize-desk",
+   "title": "Organize desk",
+   "room": "office-grant",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-office-grant-dust-electronics",
+   "title": "Dust electronics",
+   "room": "office-grant",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-office-cass-organize-desk",
+   "title": "Organize desk",
+   "room": "office-cass",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-office-cass-dust-electronics",
+   "title": "Dust electronics",
+   "room": "office-cass",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-guest-dust-vacuum",
+   "title": "Dust & vacuum",
+   "room": "guest",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-guest-air-out-room",
+   "title": "Air out room",
+   "room": "guest",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-nursery-dust-vacuum",
+   "title": "Dust & vacuum",
+   "room": "nursery",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-nursery-air-out-room",
+   "title": "Air out room",
+   "room": "nursery",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-laundry-run-washer-clean-cycle",
+   "title": "Run washer clean cycle",
+   "room": "laundry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-laundry-wipe-dryer-drum-lint-housing",
+   "title": "Wipe dryer drum & lint housing",
+   "room": "laundry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-laundry-empty-dehumidifier-rinse-filter",
+   "title": "Empty dehumidifier, rinse filter",
+   "room": "laundry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-laundry-check-walls-for-new-efflorescence-or-dam",
+   "title": "Check walls for new efflorescence or damp",
+   "room": "laundry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-laundry-check-leak-sensors",
+   "title": "Check leak sensors",
+   "room": "laundry",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-studio-dust-gear-keyboards",
+   "title": "Dust gear & keyboards",
+   "room": "studio",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-studio-vacuum-floor",
+   "title": "Vacuum floor",
+   "room": "studio",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-studio-wipe-down-drum-kit-cymbals",
+   "title": "Wipe down drum kit & cymbals",
+   "room": "studio",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-garage-wipe-down-gym-equipment",
+   "title": "Wipe down gym equipment",
+   "room": "garage",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-garage-sweep-garage",
+   "title": "Sweep garage",
+   "room": "garage",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-garage-tidy-tool-wall",
+   "title": "Tidy tool wall",
+   "room": "garage",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-yard-sweep-patio",
+   "title": "Sweep patio",
+   "room": "yard",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-yard-wipe-outdoor-furniture",
+   "title": "Wipe outdoor furniture",
+   "room": "yard",
+   "freq": "monthly"
+  },
+  {
+   "id": "m-yard-clean-grill-grates",
+   "title": "Clean grill grates",
+   "room": "yard",
+   "freq": "monthly"
+  },
+  {
+   "id": "s-laundry-replace-furnace-filter",
+   "title": "Replace furnace filter",
+   "room": "laundry",
+   "freq": "seasonal",
+   "months": [
+    1,
+    4,
+    7,
+    10
+   ]
+  },
+  {
+   "id": "s-entry-test-smoke-co-alarms",
+   "title": "Test smoke & CO alarms",
+   "room": "entry",
+   "freq": "seasonal",
+   "months": [
+    1,
+    4,
+    7,
+    10
+   ]
+  },
+  {
+   "id": "s-laundry-check-leak-sensor-batteries",
+   "title": "Check leak sensor batteries",
+   "room": "laundry",
+   "freq": "seasonal",
+   "months": [
+    4,
+    10
+   ]
+  },
+  {
+   "id": "s-laundry-flush-water-heater",
+   "title": "Flush water heater",
+   "room": "laundry",
+   "freq": "seasonal",
+   "months": [
+    3
+   ]
+  },
+  {
+   "id": "s-laundry-clean-dryer-vent-duct",
+   "title": "Clean dryer vent duct",
+   "room": "laundry",
+   "freq": "seasonal",
+   "months": [
+    9
+   ]
+  },
+  {
+   "id": "s-living-deep-clean-carpets-rugs",
+   "title": "Deep clean carpets & rugs",
+   "room": "living",
+   "freq": "seasonal",
+   "months": [
+    4,
+    10
+   ]
+  },
+  {
+   "id": "s-living-have-chimney-fireplace-checked",
+   "title": "Have chimney & fireplace checked",
+   "room": "living",
+   "freq": "seasonal",
+   "months": [
+    9
+   ]
+  },
+  {
+   "id": "s-entry-vacuum-out-vents-registers",
+   "title": "Vacuum out vents & registers",
+   "room": "entry",
+   "freq": "seasonal",
+   "months": [
+    3,
+    9
+   ]
+  },
+  {
+   "id": "s-entry-switch-ceiling-fan-direction",
+   "title": "Switch ceiling fan direction",
+   "room": "entry",
+   "freq": "seasonal",
+   "months": [
+    5,
+    10
+   ]
+  },
+  {
+   "id": "s-bedroom-rotate-mattress",
+   "title": "Rotate mattress",
+   "room": "bedroom",
+   "freq": "seasonal",
+   "months": [
+    3,
+    9
+   ]
+  },
+  {
+   "id": "s-kitchen-vacuum-fridge-coils",
+   "title": "Vacuum fridge coils",
+   "room": "kitchen",
+   "freq": "seasonal",
+   "months": [
+    6,
+    12
+   ]
+  },
+  {
+   "id": "s-dining-wash-windows-screens",
+   "title": "Wash windows & screens",
+   "room": "dining",
+   "freq": "seasonal",
+   "months": [
+    5,
+    9
+   ]
+  },
+  {
+   "id": "s-yard-mow-lawn",
+   "title": "Mow lawn",
+   "room": "yard",
+   "freq": "seasonal",
+   "prn": true,
+   "months": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+   ]
+  },
+  {
+   "id": "s-yard-rake-or-mulch-leaves",
+   "title": "Rake or mulch leaves",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    10,
+    11
+   ]
+  },
+  {
+   "id": "s-yard-clean-gutters-downspouts",
+   "title": "Clean gutters & downspouts",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    5,
+    11
+   ]
+  },
+  {
+   "id": "s-yard-disconnect-hoses-shut-off-spigot",
+   "title": "Disconnect hoses, shut off spigot",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    11
+   ]
+  },
+  {
+   "id": "s-yard-turn-spigot-back-on-check-for-leaks",
+   "title": "Turn spigot back on, check for leaks",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    4
+   ]
+  },
+  {
+   "id": "s-yard-stock-firewood",
+   "title": "Stock firewood",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    10
+   ]
+  },
+  {
+   "id": "s-yard-pressure-wash-patio",
+   "title": "Pressure wash patio",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    5
+   ]
+  },
+  {
+   "id": "s-yard-prep-garden-beds",
+   "title": "Prep garden beds",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    4
+   ]
+  },
+  {
+   "id": "s-yard-cover-grill-patio-furniture",
+   "title": "Cover grill & patio furniture",
+   "room": "yard",
+   "freq": "seasonal",
+   "months": [
+    11
+   ]
+  },
+  {
+   "id": "s-yard-shovel-walk-salt-steps",
+   "title": "Shovel walk & salt steps",
+   "room": "yard",
+   "freq": "seasonal",
+   "prn": true,
+   "months": [
+    12,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "s-garage-declutter-garage",
+   "title": "Declutter garage",
+   "room": "garage",
+   "freq": "seasonal",
+   "months": [
+    4,
+    10
+   ]
+  }
+ ]
+}

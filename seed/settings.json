@@ -1,0 +1,9 @@
+{
+ "version": 1,
+ "mode": "rotate",
+ "rotation": {
+  "anchorWeek": "2026-10-12",
+  "anchorMonth": "2026-10",
+  "zoneAStarts": "grant"
+ }
+}

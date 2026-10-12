@@ -1,0 +1,36 @@
+{
+ "version": 1,
+ "lists": [
+  {
+   "id": "restock",
+   "name": "Restock & refill",
+   "items": []
+  },
+  {
+   "id": "lowes",
+   "name": "Lowe's cart",
+   "items": [
+    {
+     "id": "l0",
+     "text": "Hinged shower door (pink bathroom)",
+     "done": false
+    },
+    {
+     "id": "l1",
+     "text": "Shower head (pink bathroom)",
+     "done": false
+    },
+    {
+     "id": "l2",
+     "text": "Caulk + grout (pink bathroom)",
+     "done": false
+    },
+    {
+     "id": "l3",
+     "text": "Oxblood paint (pink bathroom)",
+     "done": false
+    }
+   ]
+  }
+ ]
+}
