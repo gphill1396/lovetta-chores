@@ -51,6 +51,9 @@ interface Settings {
   rotation: { anchorWeek: string; anchorMonth: string; zoneAStarts: Person };
   colors?: Partial<Record<Person, string>>;
   lastCheckin?: { at: string; by: Person; week: string };
+  lastMonthCheckin?: { at: string; by: Person; month: string };
+  /** Rough minutes per weekday (index 0 = Sunday) each person has for house stuff. */
+  budgets?: Partial<Record<Person, number[]>>;
 }
 interface DoneMark { by: Person; at: string }
 interface Log { version: number; done: Record<string, DoneMark> }
@@ -58,8 +61,14 @@ type Status = "todo" | "doing" | "done";
 interface Project {
   id: string; task: string; category: string; priority: number; effort: number; lead: Owner; status: Status;
   start?: string; cost?: string; notes?: string; links?: string; doneAt?: string; doneBy?: Person;
-  /** weekKey of the week it was picked for in a check-in. */
+  /** Legacy weekKey from the first check-in version; read via projWeek(). */
   focus?: string;
+  /** Planning: specific days (an XL job can span several), a week, a month. */
+  days?: string[];
+  week?: string;
+  month?: string;
+  /** "Worked on it" entries for big projects. */
+  sessions?: { by: Person; at: string; day: string }[];
   /** S/M/L/XL. Falls back to the sheet's 1–5 effort (1 = hardest); read via projectSize(). */
   size?: Size;
 }
@@ -324,6 +333,75 @@ function sizeTally(sizes: Size[]): string {
   return SIZES.filter((z) => sizes.includes(z)).map((z) => `${sizes.filter((x) => x === z).length} ${z}`).join(", ");
 }
 
+const SIZE_MIN: Record<Size, number> = { S: 15, M: 40, L: 150, XL: 360 };
+/** Defaults, Sun..Sat. Grant's follow his routine (Thursday is Miamisburg + lessons + DGH, Wednesday is D&D). */
+const DEFAULT_BUDGET: Record<Person, number[]> = { grant: [90, 60, 60, 30, 0, 60, 180], cass: [120, 45, 45, 15, 45, 45, 180] };
+const BUDGET_OPTIONS = [0, 15, 30, 45, 60, 90, 120, 180, 240, 360];
+const budgetOf = (s: Settings, p: Person) => s.budgets?.[p] ?? DEFAULT_BUDGET[p];
+const budgetFor = (s: Settings, p: Person, day: string) => budgetOf(s, p)[parseDay(day).getDay()] ?? 0;
+function fmtMin(m: number): string {
+  const r = Math.round(m);
+  if (r < 60) return `${r}m`;
+  const h = Math.floor(r / 60), mm = r % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
+}
+const projWeek = (p: Project) => p.week ?? p.focus;
+const isBig = (z: Size) => z === "L" || z === "XL";
+const dayLabel = (day: string, now: Date) => (day === dayKey(now) ? "Today" : DAYS[parseDay(day).getDay()]);
+const monthName = (mk: string) => MONTHS_LONG[Number(mk.slice(6, 8)) - 1] ?? "";
+
+/** Where a project sits in time, relative to `now`. Unfinished plans roll forward, never vanish. */
+interface ProjInfo {
+  open: boolean; thisWeek: boolean; thisMonth: boolean; carriedWeek: boolean; carriedMonth: boolean;
+  daysThisWeek: string[]; future: string[]; overdueDay?: string;
+}
+function projInfo(p: Project, now: Date): ProjInfo {
+  const today = dayKey(now), wk = weekKey(now), mk = monthKey(now);
+  const ws = dayKey(mondayOf(now)), we = dayKey(addDays(mondayOf(now), 6));
+  const days = p.days ?? [];
+  const daysThisWeek = days.filter((d) => d >= ws && d <= we);
+  const future = days.filter((d) => d >= today);
+  const open = p.status !== "done";
+  const w = projWeek(p);
+  const stale = future.length === 0 && daysThisWeek.length === 0;
+  const carriedWeek = open && stale && ((!!w && w < wk) || days.some((d) => d < ws));
+  const thisWeek = open && (w === wk || daysThisWeek.length > 0 || carriedWeek);
+  const carriedMonth = open && !thisWeek && future.length === 0 && !!p.month && p.month < mk;
+  const thisMonth = open && (p.month === mk || thisWeek || carriedMonth || days.some((d) => d >= today && `M${d.slice(0, 7)}` === mk));
+  const past = daysThisWeek.filter((d) => d < today).sort();
+  const overdueDay = open && future.length === 0 && past.length ? past[past.length - 1] : undefined;
+  return { open, thisWeek, thisMonth, carriedWeek, carriedMonth, daysThisWeek, future, overdueDay };
+}
+
+/** Minutes planned per day per person: chores with a day plus projects spread over their days. */
+type Loads = Map<string, Record<Person, number>>;
+function computeLoads(data: Data, inst: (c: Chore, at?: Date) => Inst): Loads {
+  const loads: Loads = new Map();
+  const chores = new Map(data.house.chores.map((c) => [c.id, c]));
+  const add = (day: string, o: Owner, m: number) => {
+    const cur = loads.get(day) ?? { grant: 0, cass: 0 };
+    if (o !== "cass") cur.grant += m;
+    if (o !== "grant") cur.cass += m;
+    loads.set(day, cur);
+  };
+  for (const [k, plan] of Object.entries(data.plans.items)) {
+    if (!plan.day || plan.skip) continue;
+    const c = chores.get(k.split("|")[1]);
+    if (!c) continue;
+    const i = inst(c, parseDay(plan.day));
+    if (i.key !== k) continue;
+    add(plan.day, i.owner, SIZE_MIN[choreSize(c)]);
+  }
+  for (const p of data.projects.projects) {
+    const days = p.days ?? [];
+    if (!days.length) continue;
+    const per = SIZE_MIN[projectSize(p)] / days.length;
+    for (const d of days) add(d, p.lead, per);
+  }
+  return loads;
+}
+const loadOf = (loads: Loads, day: string, p: Person) => loads.get(day)?.[p] ?? 0;
+
 /** Everything about one chore for one period (this week / this month). */
 interface Inst {
   c: Chore; key: string; period: string; owner: Owner; covering: boolean;
@@ -408,16 +486,21 @@ const nowIso = () => new Date().toISOString();
 
 /* ============================================================== context */
 
-interface Toast { id: number; text: string; undo?: () => void }
+interface ToastAction { label: string; run: () => void }
+interface Toast { id: number; text: string; undo?: () => void; action?: ToastAction }
 
 interface Ctx {
   data: Data; me: Person; now: Date; rooms: Map<string, Room>; mutate: Mutate;
   inst: (c: Chore, at?: Date) => Inst;
   act: ReturnType<typeof makeActions>;
-  toast: (text: string, undo?: () => void) => void;
+  toast: (text: string, undo?: () => void, action?: ToastAction) => void;
+  loads: Loads;
   openChore: (c: Chore) => void;
+  openProject: (id: string) => void;
+  openPlan: (it: Item) => void;
   openInbox: () => void;
   openCheckin: () => void;
+  openMonthCheckin: () => void;
   goTab: (t: Tab) => void;
 }
 const AppCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -505,6 +588,10 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
         if (x && x.status === "open") { x.status = accept ? "accepted" : "declined"; x.answeredAt = nowIso(); }
         return d;
       }, `${N} ${accept ? "took" : "passed on"} "${a.ref?.title}"`);
+      if (accept && a.ref?.type === "project") {
+        mutate("projects", (d) => { const x = d.projects.find((y) => y.id === a.ref!.id); if (x) x.lead = me; return d; },
+          `${N} now leads "${a.ref.title}"`);
+      }
       if (accept && a.ref?.type === "chore") {
         if (a.permanent) {
           mutate("house", (d) => { const c = d.chores.find((y) => y.id === a.ref!.id); if (c) c.owner = me; return d; },
@@ -513,7 +600,7 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
           setPlan(`${a.ref.period}|${a.ref.id}`, (p) => { p.owner = me; }, `${N} is covering "${a.ref.title}"`);
         }
       }
-      toast(accept ? `${a.ref?.title} is yours ${a.permanent ? "from now on" : "this time"}` : `Let ${NAME[a.by]} know you can't`);
+      toast(accept ? `${a.ref?.title} is yours ${a.permanent || a.ref?.type === "project" ? "from now on" : "this time"}` : `Let ${NAME[a.by]} know you can't`);
     },
     cancelRequest(a: Activity) {
       mutate("activity", (d) => ({ ...d, items: d.items.filter((x) => x.id !== a.id) }), `${N} withdrew a request`);
@@ -609,9 +696,64 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
       toast(status === "done" ? `Finished ${p.task}` : `${p.task} is ${STATUS[status].toLowerCase()}`, () =>
         mutate("projects", (d) => { const x = d.projects.find((y) => y.id === p.id); if (x) Object.assign(x, prev); return d; }, `${N} undid a change to "${p.task}"`));
     },
-    setFocus(p: Project, week: string | null) {
-      mutate("projects", (d) => { const x = d.projects.find((y) => y.id === p.id); if (x) { if (week) x.focus = week; else delete x.focus; } return d; },
-        week ? `${N} picked "${p.task}" for this week` : `${N} dropped "${p.task}" from this week`);
+    planProject(p: Project, patch: { days?: string[]; week?: string | null; month?: string | null }, text: string) {
+      const prev = { days: p.days, week: p.week, month: p.month, focus: p.focus };
+      mutate("projects", (d) => {
+        const x = d.projects.find((y) => y.id === p.id);
+        if (!x) return d;
+        if (patch.days !== undefined) { if (patch.days.length) x.days = [...new Set(patch.days)].sort(); else delete x.days; }
+        if (patch.week !== undefined) { if (patch.week) x.week = patch.week; else delete x.week; delete x.focus; }
+        if (patch.month !== undefined) { if (patch.month) x.month = patch.month; else delete x.month; }
+        return d;
+      }, `${N} planned "${p.task}": ${text}`);
+      toast(`${p.task}: ${text}`, () => mutate("projects", (d) => {
+        const x = d.projects.find((y) => y.id === p.id);
+        if (x) for (const k of ["days", "week", "month", "focus"] as const) { if (prev[k] === undefined) delete x[k]; else (x as any)[k] = prev[k]; }
+        return d;
+      }, `${N} undid planning "${p.task}"`));
+    },
+    session(p: Project, day: string, on: boolean) {
+      const prev = { sessions: clone(p.sessions ?? []), status: p.status };
+      mutate("projects", (d) => {
+        const x = d.projects.find((y) => y.id === p.id);
+        if (!x) return d;
+        const list = (x.sessions ?? []).filter((y) => y.day !== day);
+        if (on) { list.push({ by: me, at: nowIso(), day }); if (x.status === "todo") x.status = "doing"; }
+        if (list.length) x.sessions = list; else delete x.sessions;
+        return d;
+      }, on ? `${N} worked on "${p.task}"` : `${N} removed a work day from "${p.task}"`);
+      const undo = () => mutate("projects", (d) => {
+        const x = d.projects.find((y) => y.id === p.id);
+        if (x) { if (prev.sessions.length) x.sessions = prev.sessions; else delete x.sessions; x.status = prev.status; }
+        return d;
+      }, `${N} undid a work day on "${p.task}"`);
+      if (on) toast(`Logged work on ${p.task}`, undo, { label: "It's finished", run: () => act.projectStatus({ ...p, status: "doing" }, "done") });
+      else toast(`Removed that work day`, undo);
+    },
+    checkProject(p: Project, day: string, isChecked: boolean) {
+      if (p.status === "done") { act.projectStatus(p, "todo"); return; }
+      if (!isBig(projectSize(p))) { act.projectStatus(p, "done"); return; }
+      act.session(p, day, !isChecked);
+    },
+    takeProject(p: Project) {
+      const prev = p.lead;
+      mutate("projects", (d) => { const x = d.projects.find((y) => y.id === p.id); if (x) x.lead = me; return d; }, `${N} took the lead on "${p.task}"`);
+      mutate("activity", addActivity({ id: uid("a"), at: nowIso(), by: me, kind: "took", to: other(me), ref: { type: "project", id: p.id, title: p.task } }), `${N} took "${p.task}"`);
+      toast(`You lead ${p.task} now`, () => mutate("projects", (d) => { const x = d.projects.find((y) => y.id === p.id); if (x) x.lead = prev; return d; }, `${N} gave back "${p.task}"`));
+    },
+    requestProject(p: Project, note: string) {
+      mutate("activity", addActivity({
+        id: uid("a"), at: nowIso(), by: me, kind: "request", to: other(me), status: "open", permanent: true,
+        ref: { type: "project", id: p.id, title: p.task }, text: note.trim() || undefined,
+      }), `${N} asked ${NAME[other(me)]} to take "${p.task}"`);
+      toast(`Asked ${NAME[other(me)]} to take ${p.task}`);
+    },
+    setBudget(dow: number, minutes: number) {
+      mutate("settings", (d) => {
+        const cur = [...(d.budgets?.[me] ?? DEFAULT_BUDGET[me])];
+        cur[dow] = minutes;
+        return { ...d, budgets: { ...d.budgets, [me]: cur } };
+      }, `${N} set ${DAYS_LONG[dow]} time to ${fmtMin(minutes)}`);
     },
     settings(fn: (s: Settings) => Settings, msg: string) { mutate("settings", fn, `${N} ${msg}`); },
     lockSplit(now: Date) {
@@ -628,6 +770,11 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
     },
     setFixed(room: Room, o: Owner) {
       mutate("house", (d) => { const r = d.rooms.find((x) => x.id === room.id); if (r) r.fixedOwner = o; return d; }, `${N} gave ${room.name} to ${NAME[o]}`);
+    },
+    monthCheckin(month: string, summary: string) {
+      mutate("settings", (d) => ({ ...d, lastMonthCheckin: { at: nowIso(), by: me, month } }), `${N} finished the monthly check-in`);
+      mutate("activity", addActivity({ id: "mcheckin-" + month, at: nowIso(), by: me, kind: "checkin", to: other(me), text: summary }), `${N} finished the monthly check-in`);
+      toast("Month planned. Nice.");
     },
     checkin(week: string, summary: string) {
       mutate("settings", (d) => ({ ...d, lastCheckin: { at: nowIso(), by: me, week } }), `${N} finished the weekly check-in`);
@@ -763,34 +910,239 @@ function SizeTag({ size }: { size: Size }) {
   return <span className={`size size-${size}`} title={SIZE_HINT[size]}>{size}</span>;
 }
 
-function TaskRow({ i, showRoom, showOwner, showDay }: { i: Inst; showRoom?: boolean; showOwner?: boolean; showDay?: boolean }) {
-  const { act, openChore, rooms, now, data, me } = useApp();
-  const on = !!i.mark;
-  const notes = notesFor(data, "chore", i.c.id).length;
-  const meta: React.ReactNode[] = [<SizeTag key="z" size={choreSize(i.c)} />];
-  if (showRoom) meta.push(<span key="r">{rooms.get(i.c.room)?.name}</span>);
-  if (showDay && i.plan?.day && !on) {
-    const d = parseDay(i.plan.day);
-    const late = i.plan.day < dayKey(now);
-    meta.push(<span key="d" className={late ? "late" : undefined}>{late ? `Planned ${DAYS[d.getDay()]}` : DAYS_LONG[d.getDay()]}</span>);
+/** A chore or a project, as it appears on a plan. */
+interface Item {
+  kind: "chore" | "project"; key: string; title: string; size: Size; owner: Owner; source: string;
+  done: boolean; by?: Person; at?: string; day?: string;
+  prn?: boolean; skipped?: string; covering?: boolean; tag?: string;
+  inst?: Inst; project?: Project;
+}
+function choreItem(i: Inst, rooms: Map<string, Room>): Item {
+  return {
+    kind: "chore", key: i.key, title: i.c.title, size: choreSize(i.c), owner: i.owner, source: rooms.get(i.c.room)?.name ?? "",
+    done: !!i.mark, by: i.mark?.by, at: i.mark?.at, day: i.plan?.day, prn: i.c.prn, skipped: i.plan?.skip?.reason,
+    covering: i.covering, inst: i,
+  };
+}
+function projectItem(p: Project, now: Date, day?: string): Item {
+  const fin = p.status === "done";
+  const s = day ? p.sessions?.find((x) => x.day === day) : undefined;
+  const info = projInfo(p, now);
+  return {
+    kind: "project", key: `p|${p.id}|${day ?? ""}`, title: p.task, size: projectSize(p), owner: p.lead, source: p.category,
+    done: fin || !!s, by: fin ? p.doneBy : s?.by, at: fin ? p.doneAt : s?.at, day, project: p,
+    tag: info.carriedWeek ? "From last week" : info.carriedMonth && p.month ? `From ${monthName(p.month)}` : undefined,
+  };
+}
+function planLabel(it: Item, now: Date): { text: string; late?: boolean } | null {
+  const today = dayKey(now);
+  if (it.kind === "chore") {
+    const d = it.inst?.plan?.day;
+    if (!d) return null;
+    return d < today ? { text: `Planned ${DAYS[parseDay(d).getDay()]}`, late: true } : { text: d === today ? "Today" : DAYS_LONG[parseDay(d).getDay()] };
   }
-  if (i.c.prn) meta.push(<span key="p">as needed</span>);
-  if (i.covering) meta.push(<span key="cv" style={{ color: ink(i.owner) }}>{i.owner === me ? "You're covering" : `${NAME[i.owner]} is covering`}</span>);
-  if (i.skipped) meta.push(<span key="s">Skipped: {i.plan!.skip!.reason}</span>);
-  if (on) meta.push(<span key="b" className="task-by" style={{ color: ink(i.mark!.by) }}>{NAME[i.mark!.by]}, {when(i.mark!.at, now)}</span>);
+  const p = it.project!;
+  const info = projInfo(p, now);
+  if (info.future.length) {
+    const shown = info.future.slice(0, 3).map((d) => (d === today ? "Today" : parseDay(d) <= addDays(mondayOf(now), 6) ? DAYS[parseDay(d).getDay()] : fmtShort(parseDay(d))));
+    return { text: shown.join(", ") + (info.future.length > 3 ? "…" : "") };
+  }
+  if (info.overdueDay) return { text: `Planned ${DAYS[parseDay(info.overdueDay).getDay()]}`, late: true };
+  if (info.thisWeek) return { text: "This week" };
+  if (info.thisMonth) return { text: `In ${MONTHS_LONG[now.getMonth()]}` };
+  return null;
+}
+
+function ItemRow({ it, showSource, showOwner, showPlan, plan }: { it: Item; showSource?: boolean; showOwner?: boolean; showPlan?: boolean; plan?: boolean }) {
+  const { act, openChore, openProject, openPlan, now, data, me } = useApp();
+  const id = it.kind === "chore" ? it.inst!.c.id : it.project!.id;
+  const notes = notesFor(data, it.kind, id).length;
+  const meta: React.ReactNode[] = [<SizeTag key="z" size={it.size} />];
+  if (showSource) meta.push(<span key="r">{it.kind === "project" ? `Project: ${it.source}` : it.source}</span>);
+  if (showPlan && !it.done) { const pl = planLabel(it, now); if (pl) meta.push(<span key="d" className={pl.late ? "late" : undefined}>{pl.text}</span>); }
+  if (it.tag && !it.done) meta.push(<span key="t" className="late">{it.tag}</span>);
+  if (it.prn) meta.push(<span key="p">as needed</span>);
+  if (it.covering) meta.push(<span key="cv" style={{ color: ink(it.owner) }}>{it.owner === me ? "You're covering" : `${NAME[it.owner]} is covering`}</span>);
+  if (it.skipped) meta.push(<span key="s">Skipped: {it.skipped}</span>);
+  if (it.done && it.by && it.at) {
+    const worked = it.kind === "project" && it.project!.status !== "done";
+    meta.push(<span key="b" className="task-by" style={{ color: ink(it.by) }}>{NAME[it.by]}{worked ? " worked on it" : ""}, {when(it.at, now)}</span>);
+  }
+  if (it.kind === "project" && it.project!.status !== "done" && (it.project!.sessions?.length ?? 0) > 0 && !it.done) {
+    const n = it.project!.sessions!.length;
+    meta.push(<span key="w">Worked on {n} {n === 1 ? "day" : "days"}</span>);
+  }
   if (notes) meta.push(<span key="n">{notes} {notes === 1 ? "note" : "notes"}</span>);
+  const toggle = () => (it.kind === "chore" ? act.setDone(it.inst!, !it.done) : act.checkProject(it.project!, it.day ?? dayKey(now), it.done));
+  const label = it.kind === "project" && isBig(it.size) && it.project!.status !== "done"
+    ? (it.done ? `Remove work logged on ${it.title}` : `Log work on ${it.title}`)
+    : it.done ? `Uncheck ${it.title}` : `Check off ${it.title}`;
   return (
-    <li className={`task${on ? " task-done" : ""}${i.skipped ? " task-skipped" : ""}`}>
-      <button type="button" className="task-check" aria-pressed={on}
-        aria-label={on ? `Uncheck ${i.c.title}` : `Check off ${i.c.title}`} onClick={() => act.setDone(i, !on)}>
-        <Check on={on} color={i.mark ? ink(i.mark.by) : "currentColor"} dashed={i.c.prn} />
+    <li className={`task${it.done ? " task-done" : ""}${it.skipped ? " task-skipped" : ""}${it.kind === "project" ? " task-project" : ""}`}>
+      <button type="button" className="task-check" aria-pressed={it.done} aria-label={label} onClick={toggle}>
+        <Check on={it.done} color={it.by ? ink(it.by) : "currentColor"} dashed={it.prn} />
       </button>
-      <button type="button" className="task-open" onClick={() => openChore(i.c)}>
-        <span className="task-title">{i.c.title}</span>
+      <button type="button" className="task-open" onClick={() => (it.kind === "chore" ? openChore(it.inst!.c) : openProject(it.project!.id))}>
+        <span className="task-title">{it.title}</span>
         {meta.length > 0 && <span className="task-meta">{meta}</span>}
       </button>
-      {showOwner && <span className="task-owner"><OwnerMark owner={i.owner} size="sm" /></span>}
+      {showOwner && <span className="task-owner"><OwnerMark owner={it.owner} size="sm" /></span>}
+      {plan && !it.done && <span className="task-plan"><button type="button" className="btn-small" onClick={() => openPlan(it)} aria-label={`Plan ${it.title}`}>Plan</button></span>}
     </li>
+  );
+}
+
+/** A day button that shows how full that day already is for whoever owns the item. */
+function DayChip({ day, on, owner, onClick, suggested }: { day: string; on: boolean; owner: Owner; onClick: () => void; suggested?: boolean }) {
+  const { data, loads, now, me } = useApp();
+  const who: Person = owner === "both" ? me : owner;
+  const budget = budgetFor(data.settings, who, day);
+  const load = loadOf(loads, day, who);
+  const state = budget === 0 ? (load > 0 ? "over" : "none") : load > budget ? "over" : load > budget * 0.6 ? "busy" : "light";
+  const pct = budget ? Math.min(100, (load / budget) * 100) : load ? 100 : 0;
+  const d = parseDay(day);
+  return (
+    <button type="button" aria-pressed={on} onClick={onClick}
+      className={`chip day-chip day-${state}${on ? " chip-on" : ""}${suggested ? " day-suggested" : ""}`}
+      aria-label={`${DAYS_LONG[d.getDay()]} ${fmtShort(d)}: ${fmtMin(load)} planned for ${NAME[who]}, about ${fmtMin(budget)} free${suggested ? ", lightest day" : ""}`}>
+      <span className="day-name">{dayLabel(day, now)}</span>
+      <span className="day-date">{d.getDate()}</span>
+      <span className="day-meter" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
+    </button>
+  );
+}
+function lightestDay(days: string[], who: Person, data: Data, loads: Loads): string | undefined {
+  let best: string | undefined, room = 0;
+  for (const d of days) {
+    const r = budgetFor(data.settings, who, d) - loadOf(loads, d, who);
+    if (r > room) { room = r; best = d; }
+  }
+  return best;
+}
+function groupByWeek(days: string[], now: Date) {
+  const groups: { label: string; days: string[] }[] = [];
+  for (const d of days) {
+    const wk = weekKey(parseDay(d));
+    const label = wk === weekKey(now) ? "This week" : wk === weekKey(addDays(now, 7)) ? "Next week" : `Week of ${fmtShort(mondayOf(parseDay(d)))}`;
+    const g = groups[groups.length - 1];
+    if (g && g.label === label) g.days.push(d); else groups.push({ label, days: [d] });
+  }
+  return groups;
+}
+
+/** Pick a day (chores) or days / week / month (projects). Shared by the plan sheet, chore card and project card. */
+function PlanControls({ it }: { it: Item }) {
+  const { act, now, data, loads, me } = useApp();
+  const today = dayKey(now);
+  const who: Person = it.owner === "both" ? me : it.owner;
+  const legend = <p className="soft small">Bars show how full each day is for {who === me ? "you" : NAME[who]}. The outlined day has the most room.</p>;
+  if (it.kind === "chore") {
+    const i = it.inst!;
+    let days: string[];
+    if (i.c.freq === "weekly") days = weekDays(now).map(dayKey).filter((d) => d >= today);
+    else {
+      days = [];
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      for (let d = parseDay(today); d <= end; d = addDays(d, 1)) days.push(dayKey(d));
+    }
+    const sug = lightestDay(days.slice(0, 7), who, data, loads);
+    return (
+      <div className="plan-controls">
+        {groupByWeek(days, now).map((g) => (
+          <div key={g.label} className="plan-week">
+            <span className="plan-week-label">{g.label}</span>
+            <div className="chips">
+              {g.days.map((d) => <DayChip key={d} day={d} owner={it.owner} on={i.plan?.day === d} suggested={d === sug && i.plan?.day !== d}
+                onClick={() => act.planDay(i, i.plan?.day === d ? null : d)} />)}
+            </div>
+          </div>
+        ))}
+        {i.plan?.day && <button type="button" className="chip chip-new" onClick={() => act.planDay(i, null)}>No day</button>}
+        {legend}
+      </div>
+    );
+  }
+  const p = it.project!;
+  const days = [...weekDays(now).map(dayKey).filter((d) => d >= today), ...weekDays(addDays(now, 7)).map(dayKey)];
+  const sug = lightestDay(days, who, data, loads);
+  const cur = p.days ?? [];
+  const wk = weekKey(now), mk = monthKey(now);
+  const toggleDay = (d: string) => {
+    const on = cur.includes(d);
+    act.planProject(p, { days: on ? cur.filter((x) => x !== d) : [...cur, d] }, on ? `off ${DAYS_LONG[parseDay(d).getDay()]}` : `on ${DAYS_LONG[parseDay(d).getDay()]}`);
+  };
+  const planned = cur.length || projWeek(p) || p.month;
+  return (
+    <div className="plan-controls">
+      {groupByWeek(days, now).map((g) => (
+        <div key={g.label} className="plan-week">
+          <span className="plan-week-label">{g.label}</span>
+          <div className="chips">
+            {g.days.map((d) => <DayChip key={d} day={d} owner={it.owner} on={cur.includes(d)} suggested={d === sug && !cur.includes(d)} onClick={() => toggleDay(d)} />)}
+          </div>
+        </div>
+      ))}
+      {isBig(projectSize(p)) && <p className="soft small">Big jobs can go on more than one day.</p>}
+      <div className="chips">
+        <button type="button" aria-pressed={projWeek(p) === wk} className={projWeek(p) === wk ? "chip chip-on" : "chip"}
+          onClick={() => act.planProject(p, { week: projWeek(p) === wk ? null : wk }, projWeek(p) === wk ? "off this week" : "this week, any day")}>This week, any day</button>
+        <button type="button" aria-pressed={p.month === mk} className={p.month === mk ? "chip chip-on" : "chip"}
+          onClick={() => act.planProject(p, { month: p.month === mk ? null : mk }, p.month === mk ? `off ${MONTHS_LONG[now.getMonth()]}` : `sometime in ${MONTHS_LONG[now.getMonth()]}`)}>
+          Sometime in {MONTHS_LONG[now.getMonth()]}
+        </button>
+        {planned && <button type="button" className="chip chip-new" onClick={() => act.planProject(p, { days: [], week: null, month: null }, "not planned")}>Clear plan</button>}
+      </div>
+      {legend}
+    </div>
+  );
+}
+
+function PlanSheet({ kind, id, onClose }: { kind: "chore" | "project"; id: string; onClose: () => void }) {
+  const { data, inst, rooms, now } = useApp();
+  const c = kind === "chore" ? data.house.chores.find((x) => x.id === id) : undefined;
+  const p = kind === "project" ? data.projects.projects.find((x) => x.id === id) : undefined;
+  useEffect(() => { if (!c && !p) onClose(); }, [c, p, onClose]);
+  const it = c ? choreItem(inst(c), rooms) : p ? projectItem(p, now) : null;
+  if (!it) return null;
+  return (
+    <Sheet title={`Plan: ${it.title}`} onClose={onClose}>
+      <div className="chore-sheet">
+        <p className="soft"><SizeTag size={it.size} /> {SIZE_HINT[it.size]}. {it.owner === "both" ? "You do it together." : `${NAME[it.owner]}'s.`}</p>
+        <PlanControls it={it} />
+        <div className="form-actions"><button type="button" className="btn-primary" onClick={onClose}>Done</button></div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** Each person's planned time per day against their usual free time. */
+function WeekLoadGrid({ start }: { start: Date }) {
+  const { data, loads } = useApp();
+  const days = weekDays(start).map(dayKey);
+  return (
+    <div className="wlg" role="table" aria-label="Planned time per day">
+      <div className="wlg-row" role="row">
+        <span role="columnheader" />
+        {days.map((d) => <span key={d} role="columnheader" className="wlg-head">{DAYS[parseDay(d).getDay()]}</span>)}
+      </div>
+      {(["grant", "cass"] as Person[]).map((p) => {
+        const total = days.reduce((n, d) => n + loadOf(loads, d, p), 0);
+        const budget = days.reduce((n, d) => n + budgetFor(data.settings, p, d), 0);
+        return (
+          <React.Fragment key={p}>
+            <div className="wlg-row" role="row">
+              <span role="rowheader" className="wlg-name" style={{ color: ink(p) }}>{NAME[p][0]}</span>
+              {days.map((d) => {
+                const l = loadOf(loads, d, p), b = budgetFor(data.settings, p, d);
+                const st = l === 0 ? "none" : b === 0 || l > b ? "over" : l > b * 0.6 ? "busy" : "light";
+                return <span key={d} role="cell" className={`wlg-cell wlg-${st}`} title={`${fmtMin(l)} of about ${fmtMin(b)}`}>{l ? fmtMin(l) : "·"}</span>;
+              })}
+            </div>
+            <p className="wlg-total small soft"><b style={{ color: ink(p) }}>{NAME[p]}</b>: {fmtMin(total)} planned of about {fmtMin(budget)} free{total > budget ? ". That's more than usual." : "."}</p>
+          </React.Fragment>
+        );
+      })}
+    </div>
   );
 }
 
@@ -838,43 +1190,64 @@ function RequestCard({ a }: { a: Activity }) {
 }
 
 function TodayView() {
-  const { data, me, now, inst, openInbox, openCheckin, goTab } = useApp();
+  const { data, me, now, inst, rooms, loads, act, openInbox, openCheckin, openMonthCheckin, goTab } = useApp();
   const today = dayKey(now);
-  const all = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
-  const mine = all.filter((i) => isFor(i.owner, me));
   const [fit, setFit] = useFit("lc:fit");
-  const [openProject, setOpenProject] = useState<Project | null>(null);
-  const pending = mine.filter((i) => !i.mark && !i.skipped && fits(choreSize(i.c), fit));
-  const open = pending.filter((i) => !i.c.prn);
-  const todays = pending.filter((i) => i.plan?.day === today);
-  const overdue = pending.filter((i) => i.plan?.day && i.plan.day < today);
-  const unplannedWeek = open.filter((i) => !i.plan?.day && i.c.freq === "weekly");
-  const unplannedMonth = open.filter((i) => !i.plan?.day && i.c.freq !== "weekly");
-  const doneToday = all.filter((i) => i.mark && dayKey(new Date(i.mark.at)) === today && isFor(i.owner, me));
-  const requests = data.activity.items.filter((a) => a.kind === "request" && a.status === "open" && a.to === me);
-  const focus = data.projects.projects.filter((p) => p.focus === weekKey(now) && p.status !== "done" && isFor(p.lead, me));
-  const unread = useUnread();
-  const showCheckin = checkinDue(data, now);
-  const [showWeekState, setShowWeek] = useState(false);
-  const [showMonthState, setShowMonth] = useState(false);
-  const showWeek = showWeekState || fit !== "any";
-  const showMonth = showMonthState || fit !== "any";
-  const fitProjects = fit === "any" ? [] : data.projects.projects
-    .filter((p) => p.status !== "done" && isFor(p.lead, me) && fits(projectSize(p), fit))
-    .sort((a, b) => a.priority - b.priority || SIZE_WEIGHT[projectSize(a)] - SIZE_WEIGHT[projectSize(b)]).slice(0, 8);
+  const [skipN, setSkipN] = useState(0);
+  const [showDone, setShowDone] = useState(false);
+  const chores = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
+  const mineC = chores.filter((i) => isFor(i.owner, me));
+  const mineP = data.projects.projects.filter((p) => isFor(p.lead, me));
+  const bySize = (a: Item, b: Item) => SIZE_WEIGHT[a.size] - SIZE_WEIGHT[b.size];
 
-  const nothing = todays.length + overdue.length === 0;
+  const todayItems: Item[] = [
+    ...mineC.filter((i) => i.plan?.day === today && !i.skipped).map((i) => choreItem(i, rooms)),
+    ...mineP.filter((p) => p.days?.includes(today) && (p.status !== "done" || (p.doneAt && dayKey(new Date(p.doneAt)) === today)))
+      .map((p) => projectItem(p, now, today)),
+  ];
+  const earlier: Item[] = [
+    ...mineC.filter((i) => !i.mark && !i.skipped && i.plan?.day && i.plan.day < today).map((i) => choreItem(i, rooms)),
+    ...mineP.filter((p) => projInfo(p, now).overdueDay).map((p) => projectItem(p, now)),
+  ];
+  const candidates: Item[] = [
+    ...mineP.filter((p) => { const f = projInfo(p, now); return f.thisWeek && !f.future.length && !f.overdueDay; }).map((p) => projectItem(p, now)),
+    ...mineC.filter((i) => !i.mark && !i.skipped && !i.c.prn && !i.plan?.day && i.c.freq === "weekly").map((i) => choreItem(i, rooms)).sort(bySize),
+    ...mineC.filter((i) => !i.mark && !i.skipped && !i.c.prn && !i.plan?.day && i.c.freq !== "weekly").map((i) => choreItem(i, rooms)).sort(bySize),
+    ...mineP.filter((p) => { const f = projInfo(p, now); return f.thisMonth && !f.thisWeek && !f.future.length; }).map((p) => projectItem(p, now)),
+  ];
+  const fitList = fit === "any" ? [] : [
+    ...candidates,
+    ...mineP.filter((p) => p.status !== "done" && !projInfo(p, now).thisMonth).sort((a, b) => a.priority - b.priority).map((p) => projectItem(p, now)),
+  ].filter((x) => fits(x.size, fit)).slice(0, 6);
+  const pending = todayItems.filter((x) => !x.done);
+  const next = candidates.length ? candidates[skipN % candidates.length] : undefined;
+  const shownKeys = new Set(todayItems.map((x) => (x.kind === "chore" ? x.key : x.project!.id)));
+  const doneToday: Item[] = [
+    ...chores.filter((i) => i.mark && i.mark.by === me && dayKey(new Date(i.mark.at)) === today && !shownKeys.has(i.key)).map((i) => choreItem(i, rooms)),
+    ...data.projects.projects.filter((p) => !shownKeys.has(p.id) && (p.sessions?.some((x) => x.day === today && x.by === me) || (p.status === "done" && p.doneBy === me && !!p.doneAt && dayKey(new Date(p.doneAt)) === today)))
+      .map((p) => projectItem(p, now, today)),
+  ];
+  const requests = data.activity.items.filter((a) => a.kind === "request" && a.status === "open" && a.to === me);
+  const unread = useUnread();
+  const planned = loadOf(loads, today, me);
+  const budget = budgetFor(data.settings, me, today);
+  const todo = pending.length + earlier.length;
+
+  const doToday = (it: Item) => {
+    if (it.kind === "chore") act.planDay(it.inst!, today);
+    else act.planProject(it.project!, { days: [...(it.project!.days ?? []), today] }, "today");
+  };
+
   return (
     <section>
       <header className="board-head">
         <h1 className="marker">{DAYS_LONG[now.getDay()]}, {fmtShort(now)}</h1>
         <p className="soft">
-          {nothing
-            ? doneToday.length ? `You've done ${doneToday.length} today. Nothing else is planned.` : "Nothing planned for today."
-            : `${todays.length + overdue.length} planned for today${doneToday.length ? `, ${doneToday.length} done` : ""}.`}
+          {todo ? `${todo} to do today.` : doneToday.length || todayItems.length ? "You're done for today." : "Nothing planned for today."}
+          {planned > 0 && <> About {fmtMin(planned)} planned; you usually have {fmtMin(budget)}.</>}
+          {planned > budget && <span className="late"> That's more than usual.</span>}
         </p>
         <FitPicker value={fit} onChange={setFit} />
-        {fit !== "any" && <p className="soft small">Showing only what fits in {SIZE_HINT[fit].toLowerCase()}.</p>}
       </header>
 
       {unread.length > 0 && (
@@ -884,107 +1257,134 @@ function TodayView() {
           <span className="since-go">Open inbox</span>
         </button>
       )}
-
       {requests.map((a) => <RequestCard key={a.id} a={a} />)}
-
-      {showCheckin && (
+      {monthCheckinDue(data, now) && (
+        <button type="button" className="since since-checkin" onClick={openMonthCheckin}>
+          <b>Plan {MONTHS_LONG[now.getMonth()]}</b>
+          <span>A few minutes together: how last month went, what's due, and which projects to take on.</span>
+          <span className="since-go">Start month check-in</span>
+        </button>
+      )}
+      {checkinDue(data, now) && (
         <button type="button" className="since since-checkin" onClick={openCheckin}>
           <b>Weekly check-in</b>
-          <span>Five minutes together: how last week went, what's next, and which projects to take on.</span>
+          <span>Five minutes together: how last week went, and what goes on which day.</span>
           <span className="since-go">Start check-in</span>
         </button>
       )}
 
-      {overdue.length > 0 && (
+      {fit !== "any" && (
+        <div className="room">
+          <div className="room-head"><h3>Fits in {SIZE_HINT[fit].toLowerCase()}</h3></div>
+          {fitList.length === 0
+            ? <p className="empty-box">Nothing that small on your plate. Nice.</p>
+            : <ul className="tasks">{fitList.map((x) => <ItemRow key={x.key} it={x} showSource showPlan plan />)}</ul>}
+        </div>
+      )}
+
+      {earlier.length > 0 && (
         <div className="room">
           <div className="room-head"><h3>Still to do from earlier</h3></div>
-          <ul className="tasks">{overdue.map((i) => <TaskRow key={i.key} i={i} showRoom showDay />)}</ul>
+          <ul className="tasks">{earlier.map((x) => <ItemRow key={x.key} it={x} showSource showPlan plan />)}</ul>
         </div>
       )}
+
       <div className="room">
         <div className="room-head"><h3>Today</h3></div>
-        {todays.length === 0 ? (
-          <div className="empty-box">
-            <p>{doneToday.length ? "All done for today 🎉" : "Nothing on today's list."}</p>
-            {open.length > 0 && <button type="button" className="btn-quiet" onClick={() => goTab("week")}>Plan your week</button>}
-          </div>
-        ) : <ul className="tasks">{todays.map((i) => <TaskRow key={i.key} i={i} showRoom />)}</ul>}
+        {todayItems.length === 0
+          ? <p className="empty-box">Nothing on today's list.</p>
+          : <ul className="tasks">{todayItems.map((x) => <ItemRow key={x.key} it={x} showSource />)}</ul>}
       </div>
 
-      {focus.length > 0 && (
-        <div className="room">
-          <div className="room-head"><h3>Projects this week</h3></div>
-          <ul className="ahead">{focus.map((p) => (
-            <li key={p.id}><button type="button" className="link-row" onClick={() => setOpenProject(p)}>
-              <span>{p.task}</span><span className="soft"><SizeTag size={projectSize(p)} /> {p.category}</span>
-            </button></li>
-          ))}</ul>
+      {pending.length === 0 && fit === "any" && next && (
+        <div className="next-up">
+          <span className="next-label">{todayItems.length ? "All done for today 🎉 If you have time:" : "Next up"}</span>
+          <ul className="tasks"><ItemRow it={next} showSource showPlan /></ul>
+          <div className="form-actions">
+            <button type="button" className="btn-quiet" onClick={() => goTab("plan")}>Plan the week</button>
+            {candidates.length > 1 && <button type="button" className="btn-quiet" onClick={() => setSkipN(skipN + 1)}>Something else</button>}
+            <button type="button" className="btn-primary" onClick={() => doToday(next)}>Do it today</button>
+          </div>
         </div>
       )}
-      {fitProjects.length > 0 && (
-        <div className="room">
-          <div className="room-head"><h3>Projects that fit</h3></div>
-          <ul className="ahead">{fitProjects.map((p) => (
-            <li key={p.id}><button type="button" className="link-row" onClick={() => setOpenProject(p)}>
-              <span>{p.task}</span><span className="soft"><SizeTag size={projectSize(p)} /> {p.category}</span>
-            </button></li>
-          ))}</ul>
-        </div>
-      )}
-      {openProject && <ProjectSheet p={openProject} onClose={() => setOpenProject(null)} />}
+      {pending.length === 0 && fit === "any" && !next && todayItems.length > 0 && <p className="empty">All done for today, and nothing else is waiting. 🎉</p>}
 
-      {unplannedWeek.length > 0 && (
-        <div className="room room-quiet">
-          <button type="button" className="room-toggle" aria-expanded={showWeek} onClick={() => setShowWeek(!showWeek)}>
-            <span>Also yours this week, no day yet</span><span className="count">{unplannedWeek.length}</span>
-          </button>
-          {showWeek && <ul className="tasks">{unplannedWeek.map((i) => <TaskRow key={i.key} i={i} showRoom />)}</ul>}
-        </div>
-      )}
-      {unplannedMonth.length > 0 && (
-        <div className="room room-quiet">
-          <button type="button" className="room-toggle" aria-expanded={showMonth} onClick={() => setShowMonth(!showMonth)}>
-            <span>Sometime in {MONTHS_LONG[now.getMonth()]}</span><span className="count">{unplannedMonth.length}</span>
-          </button>
-          {showMonth && <ul className="tasks">{unplannedMonth.map((i) => <TaskRow key={i.key} i={i} showRoom />)}</ul>}
-        </div>
-      )}
       {doneToday.length > 0 && (
         <div className="room room-quiet">
-          <div className="room-head"><h3>Done today</h3></div>
-          <ul className="tasks">{doneToday.map((i) => <TaskRow key={i.key} i={i} showRoom />)}</ul>
+          <button type="button" className="room-toggle" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+            <span>Also done today</span><span className="count">{doneToday.length}</span>
+          </button>
+          {showDone && <ul className="tasks">{doneToday.map((x) => <ItemRow key={x.key} it={x} showSource />)}</ul>}
         </div>
       )}
     </section>
   );
 }
 
-/* ============================================================ Week plan */
+/* ============================================================ Plan tab */
 
 type Filter = "me" | "them" | "all";
 
+function PlanView() {
+  const [view, setView] = useState<"week" | "month">(() => (lsGet("lc:planview") === "month" ? "month" : "week"));
+  useEffect(() => lsSet("lc:planview", view), [view]);
+  return (
+    <>
+      <div className="subnav">
+        <Segmented label="Plan by" value={view} onChange={setView} options={[{ value: "week", label: "Week" }, { value: "month", label: "Month" }]} />
+      </div>
+      {view === "week" ? <WeekView /> : <MonthView />}
+    </>
+  );
+}
+
+function dayItems(day: string, data: Data, inst: Ctx["inst"], rooms: Map<string, Room>, now: Date): Item[] {
+  const date = parseDay(day);
+  const chores = data.house.chores.filter((c) => isDue(c, date)).map((c) => inst(c, date)).filter((i) => i.plan?.day === day && !i.skipped);
+  const projects = data.projects.projects.filter((p) => p.days?.includes(day) && (p.status !== "done" || (p.doneAt && dayKey(new Date(p.doneAt)) <= day) || p.sessions?.some((x) => x.day === day)));
+  return [...chores.map((i) => choreItem(i, rooms)), ...projects.map((p) => projectItem(p, now, day))];
+}
+
+function LaneLoad({ day }: { day: string }) {
+  const { data, loads, me } = useApp();
+  return (
+    <span className="lane-load">
+      {([me, other(me)] as Person[]).map((p) => {
+        const l = loadOf(loads, day, p), b = budgetFor(data.settings, p, day);
+        return (
+          <span key={p} className={l > b ? "over" : undefined} title={`${NAME[p]}: ${fmtMin(l)} planned of about ${fmtMin(b)}`}>
+            <b style={{ color: ink(p) }}>{NAME[p][0]}</b> {fmtMin(l)}/{fmtMin(b)}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function WeekView() {
-  const { data, me, now, inst, openCheckin } = useApp();
+  const { data, me, now, inst, rooms, openCheckin } = useApp();
   const [filter, setFilter] = useState<Filter>(() => (lsGet("lc:weekfilter") as Filter) || "me");
   const [showTray, setShowTray] = useState(false);
   useEffect(() => lsSet("lc:weekfilter", filter), [filter]);
-  const days = weekDays(now);
+  const days = weekDays(now).map(dayKey);
   const today = dayKey(now);
-  const all = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
   const who = filter === "me" ? me : filter === "them" ? other(me) : null;
-  const shown = all.filter((i) => !who || isFor(i.owner, who));
+  const keep = (x: Item) => !who || isFor(x.owner, who);
+  const all = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
   const weekly = all.filter((i) => i.c.freq === "weekly" && !i.c.prn && !i.skipped);
   const rows = ([me, other(me)] as Person[]).map((p) => {
     const mine = weekly.filter((i) => isFor(i.owner, p));
     return { p, done: mine.filter((i) => i.mark).length, total: mine.length };
   });
-  const tray = shown.filter((i) => i.c.freq === "weekly" && !i.c.prn && !i.plan?.day && !i.mark && !i.skipped);
-
+  const tray: Item[] = [
+    ...data.projects.projects.filter((p) => { const f = projInfo(p, now); return f.thisWeek && !f.future.length; }).map((p) => projectItem(p, now)),
+    ...weekly.filter((i) => !i.plan?.day && !i.mark).map((i) => choreItem(i, rooms)),
+  ].filter(keep);
   return (
     <section>
       <header className="board-head">
-        <h1 className="marker">Week of {fmtShort(days[0])}</h1>
-        <p className="soft">Tap a chore to put it on a day. You both see the same plan.</p>
+        <h1 className="marker">Week of {fmtShort(parseDay(days[0]))}</h1>
+        <p className="soft">Chores and projects, day by day. Each day shows planned time against how much you usually have.</p>
         <Bars rows={rows} />
         <Balance at={now} />
         <Segmented label="Show" value={filter} onChange={setFilter} options={[
@@ -992,36 +1392,149 @@ function WeekView() {
         ]} />
         {tray.length > 0 && (
           <button type="button" className="link-btn tray-jump" onClick={() => { setShowTray(true); setTimeout(() => document.querySelector(".room-tray")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30); }}>
-            {tray.length} {tray.length === 1 ? "chore needs" : "chores need"} a day
+            {tray.length} {tray.length === 1 ? "thing needs" : "things need"} a day
           </button>
         )}
       </header>
-
-      {days.map((d) => {
-        const k = dayKey(d);
-        const items = shown.filter((i) => i.plan?.day === k);
+      {days.map((k) => {
+        const items = dayItems(k, data, inst, rooms, now).filter(keep);
         return (
           <div key={k} className={`room lane${k === today ? " lane-today" : ""}${k < today ? " lane-past" : ""}`}>
             <div className="room-head">
-              <h3>{DAYS_LONG[d.getDay()]} <span className="soft lane-date">{fmtShort(d)}</span></h3>
-              {k === today && <span className="lane-badge">Today</span>}
+              <h3>{DAYS_LONG[parseDay(k).getDay()]} <span className="soft lane-date">{fmtShort(parseDay(k))}</span></h3>
+              <LaneLoad day={k} />
             </div>
             {items.length === 0
               ? <p className="lane-empty">{k < today ? "Nothing was planned." : "Open"}</p>
-              : <ul className="tasks">{items.map((i) => <TaskRow key={i.key} i={i} showRoom showOwner />)}</ul>}
+              : <ul className="tasks">{items.map((x) => <ItemRow key={x.key} it={x} showSource showOwner={filter === "all"} plan={k >= today} />)}</ul>}
           </div>
         );
       })}
       <div className="room room-tray">
         <button type="button" className="room-toggle" aria-expanded={showTray} onClick={() => setShowTray(!showTray)}>
-          <span>No day yet</span><span className="count">{tray.length}</span>
+          <span>This week, no day yet</span><span className="count">{tray.length}</span>
         </button>
         {showTray && (tray.length === 0
-          ? <p className="empty-box">Every weekly chore has a day. Nice planning.</p>
-          : <ul className="tasks">{tray.map((i) => <TaskRow key={i.key} i={i} showRoom showOwner />)}</ul>)}
+          ? <p className="empty-box">Everything this week has a day. Nice planning.</p>
+          : <ul className="tasks">{tray.map((x) => <ItemRow key={x.key} it={x} showSource showOwner={filter === "all"} showPlan plan />)}</ul>)}
       </div>
       <button type="button" className="btn-add" onClick={openCheckin}>Weekly check-in</button>
     </section>
+  );
+}
+
+function MonthView() {
+  const { data, me, now, inst, rooms, loads, openMonthCheckin } = useApp();
+  const today = dayKey(now);
+  const [sel, setSel] = useState(today);
+  const [showDone, setShowDone] = useState(false);
+  const [showDue, setShowDue] = useState(false);
+  const [dueWho, setDueWho] = useState<Filter>("me");
+  const y = now.getFullYear(), m = now.getMonth();
+  const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
+  const lead = (first.getDay() + 6) % 7;
+  const cells: (string | null)[] = [...Array(lead).fill(null)];
+  for (let d = first; d <= last; d = addDays(d, 1)) cells.push(dayKey(d));
+  const weeks: Date[] = [];
+  for (let w = mondayOf(first); w <= last; w = addDays(w, 7)) weeks.push(w);
+  const dueAll = data.house.chores.filter((c) => c.freq !== "weekly" && isDue(c, now)).map((c) => choreItem(inst(c), rooms));
+  const due = dueAll.filter((x) => dueWho === "all" || isFor(x.owner, dueWho === "me" ? me : other(me)));
+  const dueOpen = due.filter((x) => !x.done && !x.skipped), dueDone = due.filter((x) => x.done || x.skipped);
+  const monthProjects = data.projects.projects.filter((p) => projInfo(p, now).thisMonth || (p.status === "done" && p.doneAt && monthKey(new Date(p.doneAt)) === monthKey(now)));
+  const selItems = dayItems(sel, data, inst, rooms, now);
+
+  return (
+    <section>
+      <header className="board-head">
+        <h1 className="marker">{MONTHS_LONG[m]}</h1>
+        <p className="soft">Tap a day to see what's on it. Bars show how full the day is for each of you.</p>
+        <button type="button" className="btn-quiet" onClick={openMonthCheckin}>Plan the month</button>
+      </header>
+      <div className="cal" role="grid" aria-label={`${MONTHS_LONG[m]} calendar`}>
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <span key={d} className="cal-head" role="columnheader">{d[0]}</span>)}
+        {cells.map((d, n) => d === null ? <span key={`b${n}`} /> : (
+          <button key={d} type="button" role="gridcell" aria-selected={d === sel}
+            className={`cal-day${d === today ? " cal-today" : ""}${d === sel ? " cal-sel" : ""}${d < today ? " cal-past" : ""}`}
+            onClick={() => setSel(d)} aria-label={`${fmtShort(parseDay(d))}: Grant ${fmtMin(loadOf(loads, d, "grant"))}, Cass ${fmtMin(loadOf(loads, d, "cass"))}`}>
+            <span className="cal-num">{parseDay(d).getDate()}</span>
+            {(["grant", "cass"] as Person[]).map((p) => {
+              const l = loadOf(loads, d, p), b = budgetFor(data.settings, p, d);
+              return <span key={p} className={`cal-bar${l > b ? " cal-over" : ""}`}><span style={{ width: `${l ? Math.max(12, Math.min(100, b ? (l / b) * 100 : 100)) : 0}%`, background: ink(p) }} /></span>;
+            })}
+          </button>
+        ))}
+      </div>
+
+      <div className="room">
+        <div className="room-head"><h3>{DAYS_LONG[parseDay(sel).getDay()]}, {fmtShort(parseDay(sel))}</h3><LaneLoad day={sel} /></div>
+        {selItems.length === 0
+          ? <p className="empty-box">Nothing planned. Use Plan on any chore or project to put it here.</p>
+          : <ul className="tasks">{selItems.map((x) => <ItemRow key={x.key} it={x} showSource showOwner plan={sel >= today} />)}</ul>}
+      </div>
+
+      <div className="room">
+        <div className="room-head"><h3>Week by week</h3></div>
+        <ul className="ahead">
+          {weeks.map((w) => {
+            const ds = weekDays(w).map(dayKey);
+            return (
+              <li key={dayKey(w)} className="week-load">
+                <span>Week of {fmtShort(w)}</span>
+                <span className="lane-load">
+                  {([me, other(me)] as Person[]).map((p) => {
+                    const l = ds.reduce((n, d) => n + loadOf(loads, d, p), 0), b = ds.reduce((n, d) => n + budgetFor(data.settings, p, d), 0);
+                    return <span key={p} className={l > b ? "over" : undefined}><b style={{ color: ink(p) }}>{NAME[p][0]}</b> {fmtMin(l)}/{fmtMin(b)}</span>;
+                  })}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div className="room">
+        <div className="room-head"><h3>Projects this month</h3><span className="count">{monthProjects.filter((p) => p.status !== "done").length}</span></div>
+        {monthProjects.length === 0
+          ? <div className="empty-box"><p>No projects picked for {MONTHS_LONG[m]} yet.</p><button type="button" className="btn-quiet" onClick={openMonthCheckin}>Pick some</button></div>
+          : <ul className="tasks">{monthProjects.map((p) => <ItemRow key={p.id} it={projectItem(p, now)} showSource showOwner showPlan plan />)}</ul>}
+      </div>
+
+      <div className="room">
+        <button type="button" className="room-toggle" aria-expanded={showDue} onClick={() => setShowDue(!showDue)}>
+          <span>Chores due this month</span><span className="count">{dueOpen.length} left</span>
+        </button>
+        {showDue && (
+          <div className="room-pad"><Segmented small label="Whose chores" value={dueWho} onChange={setDueWho} options={[
+            { value: "me", label: "Mine" }, { value: "them", label: NAME[other(me)] }, { value: "all", label: "Both" },
+          ]} /></div>
+        )}
+        {showDue && (dueOpen.length === 0 ? <p className="empty-box">All of these are done.</p>
+          : <ul className="tasks">{dueOpen.map((x) => <ItemRow key={x.key} it={x} showSource showOwner={dueWho === "all"} showPlan plan />)}</ul>)}
+        {showDue && dueDone.length > 0 && (
+          <>
+            <button type="button" className="room-toggle" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+              <span>Done or skipped</span><span className="count">{dueDone.length}</span>
+            </button>
+            {showDone && <ul className="tasks">{dueDone.map((x) => <ItemRow key={x.key} it={x} showSource showOwner />)}</ul>}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================ House tab */
+
+function HouseView() {
+  const [view, setView] = useState<"chores" | "projects">(() => (lsGet("lc:house") === "projects" ? "projects" : "chores"));
+  useEffect(() => lsSet("lc:house", view), [view]);
+  return (
+    <>
+      <div className="subnav">
+        <Segmented label="House" value={view} onChange={setView} options={[{ value: "chores", label: "Chores" }, { value: "projects", label: "Projects" }]} />
+      </div>
+      {view === "chores" ? <ChoresView /> : <ProjectsView />}
+    </>
   );
 }
 
@@ -1059,6 +1572,7 @@ function ChoresView() {
           { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }, { value: "seasonal", label: "Seasonal" },
         ]} />
         <h1 className="marker">{heading}</h1>
+        <p className="soft">Everything in the house, by room. Tap Plan to put a chore on a day.</p>
         <p className="soft">{data.settings.mode === "rotate"
           ? freq === "weekly" ? "Rooms trade sides every Monday." : "Rooms trade sides on the 1st."
           : "Everyone keeps their rooms."}</p>
@@ -1071,7 +1585,7 @@ function ChoresView() {
       {groups.map((g) => (
         <div key={g.room.id} className="room">
           <div className="room-head"><h3>{g.room.name}</h3><OwnerMark owner={g.owner} /></div>
-          <ul className="tasks">{g.items.map((i) => <TaskRow key={i.key} i={i} showDay showOwner={i.owner !== g.owner} />)}</ul>
+          <ul className="tasks">{g.items.map((i) => <ItemRow key={i.key} it={choreItem(i, rooms)} showPlan showOwner={i.owner !== g.owner} plan />)}</ul>
         </div>
       ))}
       {upcoming.map(({ d, items }) => items.length > 0 && (
@@ -1142,7 +1656,6 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
   const today = dayKey(now);
   const pending = data.activity.items.find((a) => a.kind === "request" && a.status === "open" && a.ref?.id === c.id && a.ref.period === i.period);
   const thanked = i.mark && data.activity.items.some((a) => a.kind === "kudos" && a.by === me && a.ref?.id === c.id && a.ref.period === i.period);
-  const days = c.freq === "weekly" ? weekDays(now) : weekDays(now).filter((d) => d.getMonth() === now.getMonth());
   const span = c.months?.length ? monthRange(c.months) : "";
   const freqLabel = c.freq === "weekly" ? `Every week${span ? `, ${span}` : ""}` : c.freq === "monthly" ? `Every month${span ? `, ${span}` : ""}` : `In ${span}`;
 
@@ -1177,19 +1690,7 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
         {!i.mark && !i.skipped && (
           <div className="block">
             <h4>When</h4>
-            <div className="chips">
-              {days.map((d) => {
-                const k = dayKey(d);
-                const on = i.plan?.day === k;
-                return (
-                  <button key={k} type="button" aria-pressed={on} className={on ? "chip chip-on" : "chip"}
-                    onClick={() => act.planDay(i, on ? null : k)}>
-                    {k === today ? "Today" : DAYS[d.getDay()]}
-                  </button>
-                );
-              })}
-              {i.plan?.day && <button type="button" className="chip chip-new" onClick={() => act.planDay(i, null)}>No day</button>}
-            </div>
+            <PlanControls it={choreItem(i, rooms)} />
             {i.plan?.day && i.plan.dayBy && i.plan.dayBy !== me && <p className="soft small">{NAME[i.plan.dayBy]} picked the day.</p>}
           </div>
         )}
@@ -1314,6 +1815,10 @@ function useFeed(): FeedItem[] {
       });
     }
     for (const p of data.projects.projects) {
+      for (const x of p.sessions ?? []) {
+        if (new Date(x.at).getTime() < cutoff) continue;
+        items.push({ id: `sess:${p.id}:${x.day}`, at: x.at, by: x.by, node: <>{<b style={{ color: ink(x.by) }}>{x.by === me ? "You" : NAME[x.by]}</b>} worked on <b>{p.task}</b>.</> });
+      }
       if (p.status === "done" && p.doneAt && p.doneBy && new Date(p.doneAt).getTime() >= cutoff) {
         items.push({ id: "proj:" + p.id, at: p.doneAt, by: p.doneBy, node: <>{<b style={{ color: ink(p.doneBy) }}>{p.doneBy === me ? "You" : NAME[p.doneBy]}</b>} finished the project <b>{p.task}</b>.</>,
           a: { id: "proj:" + p.id, at: p.doneAt, by: p.doneBy, kind: "kudos", ref: { type: "project", id: p.id, title: p.task } } });
@@ -1437,14 +1942,16 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
     const chores = data.house.chores.filter((c) => c.freq === "weekly" && !c.prn && isDue(c, planDate))
       .map((c) => inst(c, planDate)).filter((i) => isFor(i.owner, p));
     const chorePts = chores.reduce((n, i) => n + SIZE_WEIGHT[choreSize(i.c)], 0);
-    const proj = openProjects.filter((x) => x.focus === planWeek && isFor(x.lead, p));
+    const proj = openProjects.filter((x) => projWeek(x) === planWeek && isFor(x.lead, p));
     const projPts = proj.reduce((n, x) => n + SIZE_WEIGHT[projectSize(x)], 0);
     return { p, chorePts, proj, projPts, total: chorePts + projPts };
   });
   const [lo, hi] = [...load].sort((a, b) => a.total - b.total);
   const lopsided = lo.total > 0 && hi.total >= lo.total * 1.5;
-  const picked = openProjects.filter((p) => p.focus === planWeek);
-  const steps = ["How last week went", "Open requests", "Who does what", "Projects for this week"];
+  const picked = openProjects.filter((p) => projWeek(p) === planWeek || (p.days ?? []).some((d) => weekKey(parseDay(d)) === planWeek));
+  const planDays = weekDays(planDate).map(dayKey);
+  const toSchedule = openProjects.filter((p) => { const f = projInfo(p, planDate); return f.thisMonth || f.thisWeek || projWeek(p) === planWeek; });
+  const steps = ["How last week went", "Open requests", "Who does what", "Plan the week"];
   const rotating = data.house.rooms.filter((r) => !r.pinned && r.zone !== "shared");
 
   const finish = () => {
@@ -1504,30 +2011,45 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
         )}
         {step === 3 && (
           <>
-            <p className="soft">Pick a few. They'll show on both Today screens this week.</p>
-            <div className="load">
-              {load.map((x) => (
-                <div key={x.p} className="load-row">
-                  <span className="progress-name" style={{ color: ink(x.p) }}>{NAME[x.p]}</span>
-                  <span className="load-bar"><span style={{ width: `${Math.min(100, (x.total / Math.max(hi.total, 1)) * 100)}%`, background: ink(x.p) }} /></span>
-                  <span className="small soft">Chores {x.chorePts}{x.proj.length ? `, projects ${sizeTally(x.proj.map(projectSize))}` : ""}. Total {x.total}</span>
-                </div>
-              ))}
-              {lopsided && <p className="small late">{NAME[hi.p]}'s week is a lot heavier. Swap a project, or hand off a chore.</p>}
-              <p className="soft small">Points: S 1, M 2, L 4, XL 8. Projects led together count for both of you.</p>
-            </div>
+            <p className="soft">Put this week's projects on days. They'll show on Today when their day comes.</p>
+            <WeekLoadGrid start={planDate} />
+            {lopsided && <p className="small late">{NAME[hi.p]}'s week is a lot heavier. Swap a project, or hand off a chore.</p>}
+            <h4>Picked for this week or {MONTHS_LONG[planDate.getMonth()]}</h4>
+            {toSchedule.length === 0 && <p className="soft small">Nothing picked yet. Add projects below.</p>}
+            <ul className="pick-list">
+              {toSchedule.map((p) => {
+                const f = projInfo(p, planDate);
+                return (
+                  <li key={p.id} className="cp-row">
+                    <div className="cp-head">
+                      <span className="pick-text"><span>{p.task}</span>
+                        <span className="soft small"><SizeTag size={projectSize(p)} /> {p.category}{f.carriedWeek ? ", from last week" : f.carriedMonth && p.month ? `, from ${monthName(p.month)}` : ""}</span></span>
+                      <OwnerMark owner={p.lead} size="sm" />
+                    </div>
+                    <div className="chips">
+                      {planDays.map((d) => {
+                        const on = !!p.days?.includes(d);
+                        return <DayChip key={d} day={d} owner={p.lead} on={on}
+                          onClick={() => act.planProject(p, { days: on ? (p.days ?? []).filter((x) => x !== d) : [...(p.days ?? []), d] }, on ? `off ${DAYS_LONG[parseDay(d).getDay()]}` : `on ${DAYS_LONG[parseDay(d).getDay()]}`)} />;
+                      })}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            <h4>Add projects to this week</h4>
             <input className="search" type="search" placeholder="Search projects" value={pq} onChange={(e) => setPq(e.target.value)} aria-label="Search projects to pick" />
             <FitPicker value={pfit} onChange={setPfit} />
             {(() => {
-              const matches = openProjects.filter((p) => p.focus === planWeek || ((!pq || `${p.task} ${p.category}`.toLowerCase().includes(pq.toLowerCase())) && fits(projectSize(p), pfit)));
+              const matches = [...openProjects].sort((a, b) => Number(projWeek(b) === planWeek) - Number(projWeek(a) === planWeek)).filter((p) => projWeek(p) === planWeek || ((!pq || `${p.task} ${p.category}`.toLowerCase().includes(pq.toLowerCase())) && fits(projectSize(p), pfit)));
               const shown = showAll || pq ? matches : matches.slice(0, 25);
               return (<>
             <ul className="pick-list">
               {shown.map((p) => {
-                const on = p.focus === planWeek;
+                const on = projWeek(p) === planWeek;
                 return (
                   <li key={p.id}>
-                    <button type="button" aria-pressed={on} className={on ? "pick pick-on" : "pick"} onClick={() => act.setFocus(p, on ? null : planWeek)}>
+                    <button type="button" aria-pressed={on} className={on ? "pick pick-on" : "pick"} onClick={() => act.planProject(p, { week: on ? null : planWeek }, on ? "off this week" : "this week")}>
                       <Check on={on} color={ink(p.lead === "both" ? me : p.lead)} />
                       <span className="pick-text"><span>{p.task}</span><span className="soft small"><SizeTag size={projectSize(p)} /> {p.category}, {PRIORITY[p.priority].toLowerCase()} priority</span></span>
                       <OwnerMark owner={p.lead} size="sm" />
@@ -1554,23 +2076,136 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
+function monthCheckinDue(data: Data, now: Date) {
+  if (now.getDate() > 7) return false;
+  const mk = monthKey(now);
+  if (data.settings.lastMonthCheckin?.month === mk) return false;
+  const pmk = monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  return !!data.settings.lastMonthCheckin || Object.values(data.log.done).some((x) => monthKey(new Date(x.at)) === pmk);
+}
+
+function MonthCheckinSheet({ onClose }: { onClose: () => void }) {
+  const { data, me, now, inst, rooms, act } = useApp();
+  const [step, setStep] = useState(0);
+  const [pq, setPq] = useState("");
+  const [pfit, setPfit] = useState<Fit>("any");
+  const [showAll, setShowAll] = useState(false);
+  const mk = monthKey(now);
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const pmk = monthKey(prev);
+  const byId = new Map(data.house.chores.map((c) => [c.id, c]));
+  const stats = (["grant", "cass"] as Person[]).map((p) => {
+    const chores = Object.entries(data.log.done).filter(([k, x]) => x.by === p && monthKey(new Date(x.at)) === pmk && byId.has(k.split("|")[1])).length;
+    const projects = data.projects.projects.filter((x) => x.status === "done" && x.doneBy === p && x.doneAt && monthKey(new Date(x.doneAt)) === pmk);
+    return { p, chores, projects };
+  });
+  const due = data.house.chores.filter((c) => c.freq !== "weekly" && isDue(c, now)).map((c) => choreItem(inst(c), rooms));
+  const open = data.projects.projects.filter((p) => p.status !== "done").sort((a, b) => a.priority - b.priority || SIZE_WEIGHT[projectSize(a)] - SIZE_WEIGHT[projectSize(b)]);
+  const picked = open.filter((p) => projInfo(p, now).thisMonth);
+  const days: string[] = [];
+  for (let d = parseDay(dayKey(now)), end = new Date(now.getFullYear(), now.getMonth() + 1, 0); d <= end; d = addDays(d, 1)) days.push(dayKey(d));
+  const load = (["grant", "cass"] as Person[]).map((p) => {
+    const mine = picked.filter((x) => isFor(x.lead, p));
+    const mins = mine.reduce((n, x) => n + SIZE_MIN[projectSize(x)], 0);
+    const free = days.reduce((n, d) => n + budgetFor(data.settings, p, d), 0);
+    return { p, mine, mins, free };
+  });
+  const steps = ["How last month went", "Due this month", "Projects for the month"];
+  const finish = () => {
+    act.monthCheckin(mk, `${MONTHS_LONG[now.getMonth()]} projects: ${picked.map((p) => p.task).join("; ") || "none yet"}.`);
+    onClose();
+  };
+  return (
+    <Sheet title={`Plan ${MONTHS_LONG[now.getMonth()]}`} onClose={onClose} wide>
+      <ol className="stepper" aria-label="Steps">
+        {steps.map((t, k) => <li key={t} className={k === step ? "step-on" : k < step ? "step-done" : ""}>{t}</li>)}
+      </ol>
+      <div className="checkin">
+        {step === 0 && (
+          <>
+            <h3>{MONTHS_LONG[prev.getMonth()]}</h3>
+            {stats.map(({ p, chores, projects }) => (
+              <p key={p}><b style={{ color: ink(p) }}>{p === me ? "You" : NAME[p]}</b>: {chores} chores{projects.length ? `, and finished ${projects.map((x) => x.task).join(", ")}` : ""}.</p>
+            ))}
+            <Balance at={prev} label={`Effort in ${MONTHS_LONG[prev.getMonth()]}`} />
+          </>
+        )}
+        {step === 1 && (
+          <>
+            <p className="soft">Monthly and seasonal chores due in {MONTHS_LONG[now.getMonth()]}. Tap Plan to put one on a day now, or leave it for the weekly check-ins.</p>
+            <ul className="tasks tasks-card">{due.map((x) => <ItemRow key={x.key} it={x} showSource showOwner showPlan plan />)}</ul>
+          </>
+        )}
+        {step === 2 && (
+          <>
+            <div className="load">
+              {load.map((x) => (
+                <div key={x.p} className="load-row">
+                  <span className="progress-name" style={{ color: ink(x.p) }}>{NAME[x.p]}</span>
+                  <span className="load-bar"><span style={{ width: `${x.free ? Math.min(100, (x.mins / x.free) * 100) : 0}%`, background: ink(x.p) }} /></span>
+                  <span className="small soft">{x.mine.length ? `${sizeTally(x.mine.map(projectSize))}, about ${fmtMin(x.mins)}` : "No projects yet"} of roughly {fmtMin(x.free)} free this month</span>
+                </div>
+              ))}
+            </div>
+            <input className="search" type="search" placeholder="Search projects" value={pq} onChange={(e) => setPq(e.target.value)} aria-label="Search projects for the month" />
+            <FitPicker value={pfit} onChange={setPfit} />
+            {(() => {
+              const isOn = (p: Project) => p.month === mk || projInfo(p, now).thisMonth;
+              const matches = open.filter((p) => isOn(p) || ((!pq || `${p.task} ${p.category}`.toLowerCase().includes(pq.toLowerCase())) && fits(projectSize(p), pfit)))
+                .sort((a, b) => Number(isOn(b)) - Number(isOn(a)));
+              const shown = showAll || pq ? matches : matches.slice(0, 25);
+              return (
+                <>
+                  <ul className="pick-list">
+                    {shown.map((p) => {
+                      const f = projInfo(p, now);
+                      const on = p.month === mk || f.thisMonth;
+                      return (
+                        <li key={p.id}>
+                          <button type="button" aria-pressed={on} className={on ? "pick pick-on" : "pick"}
+                            onClick={() => act.planProject(p, { month: on ? null : mk, ...(on && projWeek(p) && projWeek(p)! < weekKey(now) ? { week: null } : {}) }, on ? `off ${MONTHS_LONG[now.getMonth()]}` : `sometime in ${MONTHS_LONG[now.getMonth()]}`)}>
+                            <Check on={on} color={ink(p.lead === "both" ? me : p.lead)} />
+                            <span className="pick-text"><span>{p.task}</span>
+                              <span className="soft small"><SizeTag size={projectSize(p)} /> {p.category}, {PRIORITY[p.priority].toLowerCase()} priority{f.carriedMonth && p.month ? `, from ${monthName(p.month)}` : ""}</span></span>
+                            <OwnerMark owner={p.lead} size="sm" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {shown.length < matches.length && <button type="button" className="btn-quiet" onClick={() => setShowAll(true)}>Show all {matches.length} open projects</button>}
+                </>
+              );
+            })()}
+          </>
+        )}
+      </div>
+      <div className="form-actions sheet-foot">
+        {step > 0 && <button type="button" className="btn-quiet" onClick={() => setStep(step - 1)}>Back</button>}
+        {step < steps.length - 1
+          ? <button type="button" className="btn-primary" onClick={() => setStep(step + 1)}>Next</button>
+          : <button type="button" className="btn-primary" onClick={finish}>Finish</button>}
+      </div>
+    </Sheet>
+  );
+}
+
 /* ============================================================= Projects */
 
 const PRIORITY = ["", "Highest", "High", "Medium", "Low", "Lowest"];
 const STATUS: Record<Status, string> = { todo: "To do", doing: "In progress", done: "Done" };
 
 function ProjectsView() {
-  const { data, me, now, act } = useApp();
+  const { data, me, now, openProject, openPlan } = useApp();
   const [lead, setLead] = useState<"all" | Owner>("all");
-  const [view, setView] = useState<"week" | "open" | "done">("open");
+  const [view, setView] = useState<"planned" | "open" | "done">("open");
   const [sort, setSort] = useState<"priority" | "easy" | "category">("priority");
-  const [editing, setEditing] = useState<Project | null>(null);
+  const [draft, setDraft] = useState<Project | null>(null);
   const [q, setQ] = useState("");
   const [fit, setFit] = useFit("lc:pfit");
-  const wk = weekKey(now);
   const list = data.projects.projects
     .filter((p) => fits(projectSize(p), fit))
-    .filter((p) => view === "done" ? p.status === "done" : view === "week" ? p.focus === wk && p.status !== "done" : p.status !== "done")
+    .filter((p) => view === "done" ? p.status === "done" : view === "planned" ? projInfo(p, now).thisMonth : p.status !== "done")
     .filter((p) => lead === "all" || p.lead === lead)
     .filter((p) => !q || `${p.task} ${p.category} ${p.notes ?? ""}`.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => {
@@ -1581,14 +2216,14 @@ function ProjectsView() {
       return a.priority - b.priority || sz;
     });
   const openCount = data.projects.projects.filter((p) => p.status !== "done" && isFor(p.lead, me)).length;
-  const focusCount = data.projects.projects.filter((p) => p.focus === wk && p.status !== "done").length;
+  const plannedCount = data.projects.projects.filter((p) => projInfo(p, now).thisMonth).length;
   return (
     <section>
       <header className="board-head">
         <h1 className="marker">House projects</h1>
-        <p className="soft">{openCount} open with your name on them.</p>
+        <p className="soft">{openCount} open with your name on them. Tap Plan to put one on a day, a week or the month.</p>
         <Segmented label="Show" value={view} onChange={setView} options={[
-          { value: "week", label: `This week${focusCount ? ` (${focusCount})` : ""}` }, { value: "open", label: "Open" }, { value: "done", label: "Done" },
+          { value: "planned", label: `Planned${plannedCount ? ` (${plannedCount})` : ""}` }, { value: "open", label: "Open" }, { value: "done", label: "Done" },
         ]} />
         <Segmented label="Lead" value={lead} onChange={setLead} options={[
           { value: "all", label: "All" }, { value: "grant", label: "Grant" }, { value: "cass", label: "Cass" }, { value: "both", label: "Together" },
@@ -1603,50 +2238,154 @@ function ProjectsView() {
           </label>
         </div>
       </header>
-      <button type="button" className="btn-add" onClick={() => setEditing({ id: uid("p"), task: "", category: "General", priority: 3, effort: 4, size: "M", lead: me, status: "todo" })}>Add a project</button>
-      {list.length === 0 && <p className="empty">{view === "done" ? "Nothing finished yet." : view === "week" ? "No projects picked for this week. Pick some in the weekly check-in, or open a project and tap Pick for this week." : "No open projects match."}</p>}
+      <button type="button" className="btn-add" onClick={() => setDraft({ id: uid("p"), task: "", category: "General", priority: 3, effort: 4, size: "M", lead: me, status: "todo" })}>Add a project</button>
+      {list.length === 0 && <p className="empty">{view === "done" ? "Nothing finished yet." : view === "planned" ? "Nothing planned yet. Tap Plan on a project, or use the monthly check-in." : "No open projects match."}</p>}
       <ul className="projects">
         {list.map((p) => {
           const notes = notesFor(data, "project", p.id).length;
+          const it = projectItem(p, now);
+          const pl = planLabel(it, now);
           return (
             <li key={p.id} className={`project prio-${p.priority}`}>
-              <button type="button" className="project-main" onClick={() => setEditing(p)}>
+              <button type="button" className="project-main" onClick={() => openProject(p.id)}>
                 <span className="project-title">{p.task}</span>
                 <span className="project-meta">
                   <SizeTag size={projectSize(p)} /><span>{p.category}</span><span>{PRIORITY[p.priority]} priority</span>
                   {p.cost && <span>{p.cost}</span>}
                   {p.status === "doing" && <span className="tag-doing">In progress</span>}
-                  {p.focus === wk && p.status !== "done" && <span className="tag-doing">This week</span>}
+                  {pl && p.status !== "done" && <span className={pl.late ? "late" : "tag-doing"}>{pl.text}</span>}
+                  {it.tag && p.status !== "done" && <span className="late">{it.tag}</span>}
                   {notes > 0 && <span>{notes} {notes === 1 ? "note" : "notes"}</span>}
                   {p.status === "done" && p.doneBy && <span style={{ color: ink(p.doneBy) }}>{NAME[p.doneBy]}, {when(p.doneAt!, now)}</span>}
                 </span>
               </button>
               <div className="project-side">
                 <OwnerMark owner={p.lead} size="sm" />
-                {p.status !== "done"
-                  ? <button type="button" className="btn-small" onClick={() => act.projectStatus(p, "done")}>Done</button>
-                  : <button type="button" className="btn-small" onClick={() => act.projectStatus(p, "todo")}>Reopen</button>}
+                {p.status !== "done" && <button type="button" className="btn-small" onClick={() => openPlan(it)} aria-label={`Plan ${p.task}`}>Plan</button>}
               </div>
             </li>
           );
         })}
       </ul>
-      {editing && <ProjectSheet p={editing} onClose={() => setEditing(null)} />}
+      {draft && <ProjectForm p={draft} isNew onClose={() => setDraft(null)} />}
     </section>
   );
 }
 
-function ProjectSheet({ p, onClose }: { p: Project; onClose: () => void }) {
-  const { data, act, now } = useApp();
-  const isNew = !data.projects.projects.some((x) => x.id === p.id);
+/** A project's card: plan it, log work, finish it, hand it off, talk about it. Edit opens the form. */
+function ProjectSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const { data, act, now, me } = useApp();
+  const p = data.projects.projects.find((x) => x.id === id);
+  const [editing, setEditing] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [askNote, setAskNote] = useState("");
+  useEffect(() => { if (!p) onClose(); }, [p, onClose]);
+  if (!p) return null;
+  if (editing) return <ProjectForm p={p} onClose={() => setEditing(false)} />;
+  const z = projectSize(p);
+  const today = dayKey(now);
+  const workedToday = !!p.sessions?.some((x) => x.day === today);
+  const them = other(me);
+  const pending = data.activity.items.find((a) => a.kind === "request" && a.status === "open" && a.ref?.type === "project" && a.ref.id === p.id);
+  const sessions = [...(p.sessions ?? [])].sort((a, b) => b.day.localeCompare(a.day));
+  return (
+    <Sheet title={p.task} onClose={onClose} action={<button type="button" className="btn-quiet" onClick={() => setEditing(true)}>Edit</button>}>
+      <div className="chore-sheet">
+        <p className="soft">
+          <SizeTag size={z} /> {SIZE_HINT[z]}. {p.category}, {PRIORITY[p.priority].toLowerCase()} priority.{p.cost ? ` About ${p.cost}.` : ""}
+        </p>
+        <p className="who-line">
+          <OwnerMark owner={p.lead} size="sm" />
+          <span>{p.lead === "both" ? "You lead this together." : p.lead === me ? "You lead this." : `${NAME[p.lead]} leads this.`}</span>
+        </p>
+        {p.status === "done" ? (
+          <div className="done-line" style={{ borderColor: p.doneBy ? ink(p.doneBy) : undefined }}>
+            <span>{p.doneBy ? <><b style={{ color: ink(p.doneBy) }}>{p.doneBy === me ? "You" : NAME[p.doneBy]}</b> finished it {when(p.doneAt!, now)}.</> : "Finished."}</span>
+            <div className="form-actions">
+              {p.doneBy && p.doneBy !== me && <button type="button" className="btn-quiet" onClick={() => act.kudos({ type: "project", id: p.id, title: p.task }, p.doneBy!)}>Say thanks</button>}
+              <button type="button" className="btn-quiet" onClick={() => act.projectStatus(p, "todo")}>Reopen</button>
+            </div>
+          </div>
+        ) : isBig(z) ? (
+          <div className="form-actions form-actions-start">
+            <button type="button" className={workedToday ? "btn-quiet" : "btn-primary"} onClick={() => act.session(p, today, !workedToday)}>
+              {workedToday ? "Worked on it today ✓" : "Worked on it today"}
+            </button>
+            <button type="button" className="btn-quiet" onClick={() => act.projectStatus(p, "done")}>Mark finished</button>
+          </div>
+        ) : (
+          <button type="button" className="btn-primary btn-big" onClick={() => act.projectStatus(p, "done")}>Mark done</button>
+        )}
+
+        {p.status !== "done" && (
+          <div className="block">
+            <h4>When</h4>
+            <PlanControls it={projectItem(p, now)} />
+          </div>
+        )}
+
+        {sessions.length > 0 && (
+          <div className="block">
+            <h4>Work so far</h4>
+            <ul className="ahead">
+              {sessions.map((x) => <li key={x.day}><span>{DAYS_LONG[parseDay(x.day).getDay()]}, {fmtShort(parseDay(x.day))}</span><span style={{ color: ink(x.by) }}>{NAME[x.by]}</span></li>)}
+            </ul>
+          </div>
+        )}
+
+        {(p.notes || p.links) && (
+          <div className="block">
+            <h4>Details</h4>
+            {p.notes && <p className="standard">{p.notes}</p>}
+            {p.links && (/^https?:\/\//.test(p.links) ? <a href={p.links} target="_blank" rel="noreferrer">Open link</a> : <p className="soft">{p.links}</p>)}
+          </div>
+        )}
+
+        {p.status !== "done" && p.lead !== "both" && (
+          <div className="block">
+            <h4>Share the load</h4>
+            {pending ? <RequestCard a={pending} /> : p.lead === them ? (
+              <div className="action-list"><button type="button" className="btn-quiet" onClick={() => act.takeProject(p)}>I'll lead this</button></div>
+            ) : asking ? (
+              <form className="form" onSubmit={(e) => { e.preventDefault(); act.requestProject(p, askNote); setAsking(false); setAskNote(""); }}>
+                <label>Note for {NAME[them]} (optional)<input value={askNote} onChange={(e) => setAskNote(e.target.value)} /></label>
+                <div className="form-actions">
+                  <button type="button" className="btn-quiet" onClick={() => setAsking(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary">Send to {NAME[them]}</button>
+                </div>
+              </form>
+            ) : (
+              <div className="action-list"><button type="button" className="btn-quiet" onClick={() => setAsking(true)}>Ask {NAME[them]} to take it</button></div>
+            )}
+          </div>
+        )}
+
+        <Notes refObj={{ type: "project", id: p.id, title: p.task }} />
+      </div>
+    </Sheet>
+  );
+}
+
+function ProjectForm({ p, isNew, onClose }: { p: Project; isNew?: boolean; onClose: () => void }) {
+  const { data, act, me } = useApp();
   const [f, setF] = useState<Project>(p);
   const set = <K extends keyof Project>(k: K, v: Project[K]) => setF((x) => ({ ...x, [k]: v }));
   const categories = [...new Set(data.projects.projects.map((x) => x.category))].sort();
-  const wk = weekKey(now);
-  const live = data.projects.projects.find((x) => x.id === p.id);
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!f.task.trim()) return;
+    const live = data.projects.projects.find((x) => x.id === p.id);
+    const out: Project = {
+      ...(live ?? f), task: f.task.trim(), category: f.category, priority: f.priority, effort: f.effort, size: f.size,
+      lead: f.lead, status: f.status, cost: f.cost, notes: f.notes, links: f.links,
+    };
+    if (out.status === "done" && live?.status !== "done") { out.doneAt = nowIso(); out.doneBy = me; }
+    act.saveProject(out);
+    onClose();
+  };
   return (
     <Sheet title={isNew ? "New project" : "Edit project"} onClose={onClose}>
-      <form className="form" onSubmit={(e) => { e.preventDefault(); if (f.task.trim()) { act.saveProject({ ...f, task: f.task.trim(), focus: live?.focus ?? f.focus }); onClose(); } }}>
+      <form className="form" onSubmit={submit}>
         <label>What needs doing<input required value={f.task} onChange={(e) => set("task", e.target.value)} /></label>
         <label>Room or area<input list="cats" value={f.category} onChange={(e) => set("category", e.target.value)} />
           <datalist id="cats">{categories.map((c) => <option key={c} value={c} />)}</datalist></label>
@@ -1657,23 +2396,17 @@ function ProjectSheet({ p, onClose }: { p: Project; onClose: () => void }) {
         </div>
         <div className="form-row">
           <label>Lead<select value={f.lead} onChange={(e) => set("lead", e.target.value as Owner)}><option value="grant">Grant</option><option value="cass">Cass</option><option value="both">Together</option></select></label>
-          <label>Status<select value={f.status} onChange={(e) => set("status", e.target.value as Status)}>{(Object.keys(STATUS) as Status[]).map((s) => <option key={s} value={s}>{STATUS[s]}</option>)}</select></label>
+          <label>Status<select value={f.status} onChange={(e) => set("status", e.target.value as Status)}>{(Object.keys(STATUS) as Status[]).map((st) => <option key={st} value={st}>{STATUS[st]}</option>)}</select></label>
         </div>
         <label>Estimated cost<input value={f.cost ?? ""} placeholder="$40–80" onChange={(e) => set("cost", e.target.value || undefined)} /></label>
         <label>Details<textarea rows={3} value={f.notes ?? ""} onChange={(e) => set("notes", e.target.value || undefined)} /></label>
         <label>Links<input value={f.links ?? ""} placeholder="Product page, quote, how-to" onChange={(e) => set("links", e.target.value || undefined)} /></label>
-        {f.links && /^https?:\/\//.test(f.links) && <a href={f.links} target="_blank" rel="noreferrer" className="small">Open link</a>}
         <div className="form-actions">
           {!isNew && <button type="button" className="btn-danger" onClick={() => { act.removeProject(p); onClose(); }}>Delete</button>}
-          {!isNew && live && live.status !== "done" && (
-            <button type="button" className="btn-quiet" onClick={() => act.setFocus(live, live.focus === wk ? null : wk)}>
-              {live.focus === wk ? "Drop from this week" : "Pick for this week"}
-            </button>
-          )}
-          <button type="submit" className="btn-primary">{isNew ? "Add project" : "Save"}</button>
+          <button type="button" className="btn-quiet" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary">{isNew ? "Add project" : "Save project"}</button>
         </div>
       </form>
-      {!isNew && <Notes refObj={{ type: "project", id: p.id, title: p.task }} />}
     </Sheet>
   );
 }
@@ -1882,6 +2615,21 @@ function SettingsSheet({ config, onConfig, onEdit, onClose, zoom, setZoom }: {
           )}
         </section>
         <section>
+          <h3>Your time for house stuff</h3>
+          <p className="soft">Roughly how much time you usually have each day. The planner uses it to flag busy days and suggest lighter ones.</p>
+          <ul className="budgets">
+            {[1, 2, 3, 4, 5, 6, 0].map((dow) => (
+              <li key={dow}>
+                <span>{DAYS_LONG[dow]}</span>
+                <select aria-label={`${DAYS_LONG[dow]} time`} value={budgetOf(s, me)[dow] ?? 0} onChange={(e) => act.setBudget(dow, Number(e.target.value))}>
+                  {BUDGET_OPTIONS.map((m) => <option key={m} value={m}>{m === 0 ? "None" : fmtMin(m)}</option>)}
+                </select>
+              </li>
+            ))}
+          </ul>
+          <p className="soft small">{NAME[other(me)]}: {[1, 2, 3, 4, 5, 6, 0].map((dow) => `${DAYS[dow]} ${fmtMin(budgetOf(s, other(me))[dow] ?? 0)}`).join(", ")}.</p>
+        </section>
+        <section>
           <h3>Rooms and chores</h3>
           <p className="soft">{data.house.rooms.length} rooms, {data.house.chores.length} chores.</p>
           <button type="button" className="btn-primary" onClick={onEdit}>Edit rooms and chores</button>
@@ -2087,11 +2835,11 @@ function Setup({ initial, onDone }: { initial: Config; onDone: (c: Config) => vo
 
 /* =================================================================== App */
 
-type Tab = "today" | "week" | "chores" | "projects" | "lists";
+type Tab = "today" | "plan" | "house" | "lists";
 const TABS: { id: Tab; label: string }[] = [
-  { id: "today", label: "Today" }, { id: "week", label: "Week" }, { id: "chores", label: "Chores" },
-  { id: "projects", label: "Projects" }, { id: "lists", label: "Lists" },
+  { id: "today", label: "Today" }, { id: "plan", label: "Plan" }, { id: "house", label: "House" }, { id: "lists", label: "Lists" },
 ];
+const OLD_TABS: Record<string, Tab> = { week: "plan", chores: "house", projects: "house" };
 
 function App() {
   const [config, setConfig] = useState<Config>(loadConfig);
@@ -2102,8 +2850,9 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup, config.mode, config.repo, config.branch, config.token]);
   const { data, error, sync, reload, mutate, clearError } = useData(store);
-  const [tab, setTab] = useState<Tab>(() => { const t = lsGet("lc:tab") as Tab; return TABS.some((x) => x.id === t) ? t : "today"; });
-  const [panel, setPanel] = useState<null | { kind: "settings" } | { kind: "editor"; chore?: Chore } | { kind: "chore"; id: string } | { kind: "inbox" } | { kind: "checkin" }>(null);
+  const [tab, setTab] = useState<Tab>(() => { const t = lsGet("lc:tab") ?? ""; return TABS.some((x) => x.id === t) ? (t as Tab) : OLD_TABS[t] ?? "today"; });
+  const [panel, setPanel] = useState<null | { kind: "settings" } | { kind: "editor"; chore?: Chore } | { kind: "chore"; id: string } | { kind: "inbox" }
+    | { kind: "checkin" } | { kind: "mcheckin" } | { kind: "project"; id: string } | { kind: "plan"; what: "chore" | "project"; id: string }>(null);
   const [now, setNow] = useState(() => new Date());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [zoom, setZoomState] = useState(() => lsGet("lc:zoom") || "1");
@@ -2112,10 +2861,10 @@ function App() {
   useEffect(() => lsSet("lc:tab", tab), [tab]);
   useEffect(() => { const id = window.setInterval(() => setNow(new Date()), 60_000); return () => window.clearInterval(id); }, []);
 
-  const toast = useCallback((text: string, undo?: () => void) => {
+  const toast = useCallback((text: string, undo?: () => void, action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts([{ id, text, undo }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), undo ? 6500 : 3500);
+    setToasts([{ id, text, undo, action }]);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 9000 : undo ? 6500 : 3500);
   }, []);
 
   const me = config.me!;
@@ -2129,6 +2878,7 @@ function App() {
     return { c, key, period, owner, covering: !!plan?.owner && plan.owner !== base, mark: data!.log.done[key], plan, skipped: !!plan?.skip };
   }, [data, rooms, now]);
   const act = useMemo(() => (data ? makeActions(data, me, mutate, toast) : null), [data, me, mutate, toast]);
+  const loads = useMemo(() => (data ? computeLoads(data, inst) : new Map() as Loads), [data, inst]);
 
   const closePanel = useCallback(() => setPanel(null), []);
 
@@ -2144,10 +2894,13 @@ function App() {
   } as React.CSSProperties;
 
   const ctx: Ctx | null = data && act ? {
-    data, me, now, rooms, mutate, inst, act, toast,
+    data, me, now, rooms, mutate, inst, act, toast, loads,
     openChore: (c) => setPanel({ kind: "chore", id: c.id }),
+    openProject: (id) => setPanel({ kind: "project", id }),
+    openPlan: (it) => setPanel({ kind: "plan", what: it.kind, id: it.kind === "chore" ? it.inst!.c.id : it.project!.id }),
     openInbox: () => setPanel({ kind: "inbox" }),
     openCheckin: () => setPanel({ kind: "checkin" }),
+    openMonthCheckin: () => setPanel({ kind: "mcheckin" }),
     goTab: (t) => { setTab(t); window.scrollTo(0, 0); },
   } : null;
 
@@ -2158,7 +2911,7 @@ function App() {
           <TopBar sync={sync} local={config.mode === "local"} onInbox={() => setPanel({ kind: "inbox" })} onSettings={() => setPanel({ kind: "settings" })} />
           {error && <ErrorBanner error={error} onRetry={() => { clearError(); reload(); }} onDismiss={clearError} />}
           <main className="main">
-            {tab === "today" ? <TodayView /> : tab === "week" ? <WeekView /> : tab === "chores" ? <ChoresView /> : tab === "projects" ? <ProjectsView /> : <ListsView />}
+            {tab === "today" ? <TodayView /> : tab === "plan" ? <PlanView /> : tab === "house" ? <HouseView /> : <ListsView />}
           </main>
           {panel?.kind === "settings" && <SettingsSheet config={config} onConfig={updateConfig} onEdit={() => setPanel({ kind: "editor" })} onClose={() => setPanel(null)}
             zoom={zoom} setZoom={(z) => { setZoomState(z); lsSet("lc:zoom", z); }} />}
@@ -2166,6 +2919,9 @@ function App() {
           {panel?.kind === "chore" && <ChoreSheet choreId={panel.id} onClose={closePanel} onEdit={(c) => setPanel({ kind: "editor", chore: c })} />}
           {panel?.kind === "inbox" && <InboxSheet onClose={() => setPanel(null)} />}
           {panel?.kind === "checkin" && <CheckinSheet onClose={() => setPanel(null)} />}
+          {panel?.kind === "mcheckin" && <MonthCheckinSheet onClose={() => setPanel(null)} />}
+          {panel?.kind === "project" && <ProjectSheet id={panel.id} onClose={closePanel} />}
+          {panel?.kind === "plan" && <PlanSheet kind={panel.what} id={panel.id} onClose={closePanel} />}
         </AppCtx.Provider>
       ) : (
         <>
@@ -2178,6 +2934,7 @@ function App() {
         {toasts.map((t) => (
           <div key={t.id} className="toast">
             <span>{t.text}</span>
+            {t.action && <button type="button" onClick={() => { t.action!.run(); setToasts([]); }}>{t.action.label}</button>}
             {t.undo && <button type="button" onClick={() => { t.undo!(); setToasts([]); }}>Undo</button>}
           </div>
         ))}
@@ -2355,6 +3112,55 @@ a { color: var(--me, #2457A6); }
 .load-bar { height: 8px; border-radius: 99px; background: var(--rule); overflow: hidden; }
 .load-bar span { display: block; height: 100%; border-radius: 99px; }
 .note-actions { display: flex; gap: 14px; }
+.room-pad { padding: 0 14px 10px; }
+.subnav { position: sticky; top: calc(57px + env(safe-area-inset-top)); z-index: 4; background: var(--board); padding: 10px 0 6px; }
+.task-plan { display: grid; place-items: center; padding-right: 12px; }
+.task-project .task-title::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--ink-soft); margin-right: 8px; vertical-align: 2px; transform: rotate(45deg); }
+.plan-controls { display: grid; gap: 10px; }
+.plan-week { display: grid; gap: 6px; }
+.plan-week-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.chip.day-chip { flex-direction: column; gap: 2px; padding: 6px 8px 7px; min-width: 52px; min-height: 58px; border-radius: 12px; align-items: stretch; }
+.day-name { font-size: 14px; font-weight: 700; text-align: center; }
+.day-date { font-size: 12px; text-align: center; opacity: .75; }
+.day-meter { height: 4px; border-radius: 99px; background: var(--rule); overflow: hidden; }
+.day-meter span { display: block; height: 100%; background: var(--both); }
+.day-busy .day-meter span { background: var(--late); }
+.day-over .day-meter span { background: var(--danger); }
+.day-none:not(.chip-on) { opacity: .6; }
+.day-suggested { box-shadow: 0 0 0 2px var(--both); }
+.chip-on .day-meter { background: rgba(255,255,255,.25); }
+.lane-load { display: inline-flex; gap: 10px; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; flex-wrap: wrap; justify-content: flex-end; }
+.lane-load .over { color: var(--danger); font-weight: 700; }
+.week-load { align-items: center; }
+.next-up { background: var(--sheet); border: 2px dashed var(--me); border-radius: var(--radius); padding: 12px 0 12px; margin: 14px 0; display: grid; gap: 6px; }
+.next-up .next-label { padding: 0 14px; font-weight: 700; }
+.next-up .form-actions { padding: 0 14px; }
+.form-actions-start { justify-content: flex-start; }
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 6px 0 4px; }
+.cal-head { text-align: center; font-size: 12px; font-weight: 700; color: var(--ink-soft); padding: 2px 0; }
+.cal-day { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; min-height: 54px; padding: 4px 4px 6px; display: grid; gap: 3px; align-content: start; cursor: pointer; text-align: left; }
+.cal-num { font-size: 13px; font-weight: 700; }
+.cal-bar { display: block; height: 4px; border-radius: 99px; background: transparent; overflow: hidden; }
+.cal-bar span { display: block; height: 100%; border-radius: 99px; }
+.cal-over { box-shadow: 0 0 0 1px var(--danger); }
+.cal-today { border: 2px solid var(--me); }
+.cal-sel { background: var(--tile-soft); }
+.cal-past { opacity: .6; }
+.wlg { display: grid; gap: 4px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px; }
+.wlg-row { display: grid; grid-template-columns: 22px repeat(7, 1fr); gap: 3px; align-items: center; }
+.wlg-head { text-align: center; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.wlg-name { font-family: "Kalam", cursive; font-weight: 700; }
+.wlg-cell { text-align: center; font-size: 12px; padding: 4px 0; border-radius: 6px; background: var(--board); font-variant-numeric: tabular-nums; }
+.wlg-busy { background: color-mix(in srgb, var(--late) 18%, var(--board)); }
+.wlg-over { background: color-mix(in srgb, var(--danger) 22%, var(--board)); font-weight: 700; }
+.wlg-none { color: var(--ink-soft); }
+.wlg-total { margin: 0 0 4px 25px; }
+.cp-row { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; }
+.cp-head { display: flex; align-items: center; gap: 10px; }
+.cp-row .day-chip { min-width: 44px; min-height: 52px; padding: 4px 6px 6px; }
+.budgets { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.budgets li { display: grid; grid-template-columns: 1fr 120px; gap: 10px; align-items: center; }
+.budgets select { width: 100%; border: 1px solid var(--rule); background: var(--sheet); border-radius: 10px; padding: 8px 10px; min-height: 42px; }
 .since { width: 100%; display: grid; gap: 4px; text-align: left; background: var(--sheet); border: 2px solid var(--me); border-radius: var(--radius); padding: 14px; margin: 6px 0 10px; cursor: pointer; }
 .since-go { color: var(--me); font-weight: 700; }
 .since-checkin { border-style: dashed; }

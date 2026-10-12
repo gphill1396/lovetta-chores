@@ -15,10 +15,10 @@ A household chore and project app for Grant and Cass. It's a static React 19 + T
 | File | Shape |
 |---|---|
 | `house.json` | `{rooms: Room[], chores: Chore[]}`. A room has `zone` A/B/shared for rotation, `fixedOwner` for keep-rooms mode, and `pinned` to never rotate. A chore has `freq` weekly/monthly/seasonal, `months` (seasonal only), `prn` (as needed), an optional permanent `owner`, optional `zone`/`fixedOwner` to split one room's chores between people, `months` (also allowed on weekly/monthly chores to limit them to a season, e.g. mowing), `standard` ("done means", plus `standardBy`/`standardAt`), and `size` S/M/L/XL (old data may have `effort` 1–3; always read through `choreSize()`). |
-| `settings.json` also has | `colors[person]` (ink id from `INKS`) and `lastCheckin {at, by, week}` |
+| `settings.json` also has | `colors[person]` (ink id from `INKS`), `lastCheckin {at, by, week}`, `lastMonthCheckin {at, by, month}`, and `budgets[person]`: 7 numbers, minutes of free time per weekday with index 0 = Sunday (falls back to `DEFAULT_BUDGET`) |
 | `settings.json` | `mode` rotate/fixed, `rotation.anchorWeek`/`anchorMonth`/`zoneAStarts` |
 | `log.json` | `done["<period>|<choreId>"] = {by, at}`. Period is `W<monday yyyy-mm-dd>` or `M<yyyy-mm>`. Pruned after 400 days. |
-| `projects.json` | `projects: Project[]`. Priority 1 = highest, `size` S/M/L/XL (falls back to the sheet's `effort`, where 1 = hardest; always read through `projectSize()`), `lead` grant/cass/both, `status` todo/doing/done. |
+| `projects.json` | `projects: Project[]`. Planning: `days[]` (an XL job can span several), `week` (weekKey), `month` (`M<yyyy-mm>`), plus legacy `focus` (read through `projWeek()`), and `sessions[] {by, at, day}` for "worked on it". Priority 1 = highest, `size` S/M/L/XL (falls back to the sheet's `effort`, where 1 = hardest; always read through `projectSize()`), `lead` grant/cass/both, `status` todo/doing/done. |
 | `lists.json` | `lists: {id, name, items: {id, text, done, by, at}[]}[]` |
 | `plans.json` | `items["<period>|<choreId>"] = {day?, dayBy?, owner?, skip?: {by, reason, at}}`. `owner` = covering for that period (accepted hand-off or "I'll do it"). Pruned after 120 days. |
 | `activity.json` | `items: Activity[]`, where `kind` is note/request/kudos/nudge/skip/standard/took/checkin. `ref` = `{type: chore|project|item, id, title, period?}`. Requests have `status` open/accepted/declined and `permanent`. Pruned after 180 days, except open requests. |
@@ -28,6 +28,10 @@ All writes go through `GitHubStore.save(name, mutate, message)`. That function r
 ## Ownership rules (`inst()` → `baseOwner` → `roomOwner`)
 
 A per-period plan `owner` (a trade) comes first, then the chore's `owner`. Next, a pinned room or fixed mode means the room's `fixedOwner` applies. Next, a shared zone means both. Otherwise rotation applies: weekly chores flip every Monday, and monthly/seasonal chores flip on the 1st, both counted from the anchors.
+
+## Information architecture
+
+Time comes first. The tabs are **Today**, **Plan** (Week / Month), **House** (Chores / Projects, the backlog) and **Lists**. Chores and projects become an `Item` (`choreItem()` / `projectItem()`) and render through `ItemRow`, so they look and behave the same once planned. Planning UI is `PlanControls` (shared by `PlanSheet`, the chore card and the project card), which uses `DayChip` load meters from `computeLoads()` (minutes per day per person, sizes → `SIZE_MIN`). `projInfo()` decides where a project sits relative to now (this week / this month / carried over / overdue). Unfinished plans must roll forward and never disappear.
 
 ## UI conventions
 

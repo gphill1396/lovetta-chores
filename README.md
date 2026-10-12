@@ -4,23 +4,18 @@ Chores, house projects and shared lists for Grant and Cass at Lovetta.
 
 **App:** https://gphill1396.github.io/lovetta-chores/
 
-- **Today**: just your plate: what's planned today, anything left from earlier in the week, requests from the other person, and a "since you last looked" card.
-- **Week**: a Mon–Sun plan you both share. Tap any chore to give it a day. Progress bars and an effort balance for the month sit at the top.
-- **Chores**: every chore by room, as Weekly, Monthly or Seasonal.
-- **Tap any chore** to:
-  - mark it done
-  - pick a day
-  - agree on what **done means**
-  - set its size (quick, medium, big)
-  - **ask the other person to take it** (this week or from now on), take theirs, or send a reminder
-  - **skip it** with a reason
-  - leave **notes**
-- **Inbox**: requests, notes, thank-yous, skips and what the other person finished, with an unread badge.
-- **Weekly check-in**: shows up on Sunday through Tuesday. It covers how last week went, open requests, who does which rooms, and which projects to take on this week.
-- **Projects** and **Lists**: the House To-Do and shared lists, with notes and a "this week" pick.
-- **Sizes**: every chore and project is S (15 min or less), M (15–60 min), L (1–4 hours) or XL (a day or a weekend). The **I have…** picker on Today and Projects shows only what fits the time you have. The effort balance counts S as 1 point, M 2, L 4 and XL 8, and the check-in shows each person's load for the week.
-- **Edit any card**: tap a chore and use Edit in the top corner. Projects and list items open straight into an editable card. You can edit or delete your own notes.
-- **Undo** after every action. Each person picks their own ink color, and there's a text-size setting.
+The app is organized around time. Chores and projects live in **House**, you plan them onto a **month, week or day**, and **Today** shows what's on your plate.
+
+- **Today**: what's planned for you today (chores and project work together), anything left from earlier, requests from the other person, and how your planned time compares to the time you usually have. When you're clear, **Next up** suggests one thing. The **I have…** picker (15 min / 1 hr / afternoon / weekend) shows only what fits.
+- **Plan → Week**: Mon–Sun lanes holding both chores and projects. Each day shows planned time for each of you against your usual free time, and red means overloaded. Anything without a day waits in "This week, no day yet".
+- **Plan → Month**: a calendar with load bars per person, the selected day's list, week-by-week load, projects for the month, and the month's chores.
+- **House**: every chore by room (weekly, monthly, seasonal) and every project. Tap **Plan** on anything to put it on a day, a week or the month. Day buttons show how full each day already is, and the outlined one has the most room.
+- **Chore and project cards** work the same way. You can mark done, plan, set the size, hand off, leave notes and edit. Big (L/XL) projects can span several days. Ticking one logs **worked on it**, and the toast offers **It's finished**.
+- **Check-ins** cascade. On the 1st of the month you pick that month's projects. On Sundays the weekly check-in reviews last week, then **plans the week**, putting the month's projects on days with a per-day load grid. Unfinished plans roll forward with a "From last week" or "Planned Tue" tag, so nothing silently disappears.
+- **Settings → Your time for house stuff**: rough free time per weekday. It drives the load bars and the lightest-day suggestions.
+- **Inbox**: requests, notes, thank-yous, skips, work sessions and finished items, with an unread badge.
+- **Lists**: Restock & refill, Lowe's cart, Move-in leftovers, and any list you add.
+- **Sizes**: S is 15 min or less, M is 15–60 min, L is 1–4 hours, and XL is a day or a weekend. **Undo** after every action, per-person ink colors and text size.
 
 There are no push notifications: a static site has no server to send them. The inbox badge and the "since you last looked" card cover that, and the app refreshes every 30 seconds while it's open.
 

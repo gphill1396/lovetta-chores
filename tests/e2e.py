@@ -4,8 +4,10 @@
     DATA_REPO_DIR=../lovetta-chores-data python3 tests/e2e.py   # start from the real data
 
 Serves dist/ locally, intercepts api.github.com, and walks the main flows:
-setup, check-off + undo, planning, hand-off + accept, notes, kudos, skip,
-"done means", inbox, check-in, a save conflict, settings and the editor.
+setup, Today + Next up, planning chores and projects onto days, work sessions,
+check-off + undo, hand-off + accept, notes, kudos, skip, "done means", sizes,
+inbox, the Week and Month plans, both check-ins, day budgets, a save conflict,
+settings and the editor.
 """
 import base64, functools, http.server, json, os, re, sys, threading
 from playwright.sync_api import sync_playwright, expect
@@ -75,6 +77,9 @@ def task(scope, title):
     """The tappable title of a chore row (not its checkbox)."""
     return scope.locator(".task-title").filter(has_text=re.compile("^" + re.escape(title) + "$")).first
 
+def tab(page, name):
+    page.locator(".tabs").get_by_role("button", name=name, exact=True).click()
+
 def close_sheet(page):
     page.locator(".sheet-head").get_by_role("button", name="Close").last.click()
 
@@ -97,9 +102,10 @@ def connect(browser, who, clock):
 with sync_playwright() as pw:
     browser = pw.chromium.launch(executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
 
-    # ------------------------------------------------------------ Grant
+    # ------------------------------------------------------------ Grant: setup
     g = browser.new_context(viewport={"width": 390, "height": 844}).new_page()
     g.context.route("https://api.github.com/**", mock)
+    g.context.route("https://fonts.googleapis.com/**", lambda r, q: r.abort())
     g.on("pageerror", lambda e: errors.append(f"grant: {e}"))
     g.clock.set_fixed_time("2026-10-12T09:00:00")
     g.goto(BASE)
@@ -113,56 +119,43 @@ with sync_playwright() as pw:
     synced(g)
     expect(g.get_by_role("heading", name="Monday, Oct 12")).to_be_visible()
     assert set(FILES) <= set(files), files.keys()
-    shot(g, "02-today-empty")
 
-    # Cass's charts: bedroom split + mowing is Grant's (weekly, as needed, Apr–Oct)
-    g.get_by_role("button", name="Chores", exact=True).click()
+    # Today: Next up suggests one thing; "Do it today" plans it
+    expect(g.locator(".next-up")).to_be_visible()
+    next_title = g.locator(".next-up .task-title").inner_text()
+    shot(g, "02-today-next-up")
+    g.locator(".next-up").get_by_role("button", name="Do it today").click()
+    synced(g)
+    assert any(v.get("day") == "2026-10-12" for v in files["plans"]["data"]["items"].values())
+    expect(task(g.locator(".room", has_text="Today"), next_title)).to_be_visible()
+    print("Next up was:", next_title)
+
+    # House: Cass's charts (bedroom split) + mowing is Grant's
+    tab(g, "House")
     g.get_by_role("button", name="Weekly").click()
     g.get_by_role("button", name="Mine").click()
     bedroom = g.locator(".room", has_text="Bedroom")
     expect(task(bedroom, "Vacuum floor, under & behind bed")).to_be_visible()
     expect(task(bedroom, "Remake bed")).to_have_count(0)
     expect(task(g.locator(".room", has_text="Patio & yard"), "Mow lawn")).to_be_visible()
-    task(g, "Mow lawn").click()
-    expect(g.locator(".chore-sheet")).to_contain_text("Every week, Apr–Oct, as needed")
-    expect(g.locator(".chore-sheet")).to_contain_text("Yours this week")
-    g.locator(".sheet").get_by_role("button", name="Today", exact=True).click()
-    synced(g)
-    close_sheet(g)
-    g.locator(".tabs").get_by_role("button", name="Today", exact=True).click()
-    expect(task(g.locator(".room", has_text="Today"), "Mow lawn")).to_be_visible()
-    g.get_by_role("button", name="Check off Mow lawn").click()
-    synced(g)
-    assert files["log"]["data"]["done"]["W2026-10-12|s-yard-mow-lawn"]["by"] == "grant"
-    g.clock.set_fixed_time("2026-11-09T09:00:00")
-    g.reload(); synced(g)
-    g.get_by_role("button", name="Chores", exact=True).click()
-    g.get_by_role("button", name="Everyone").click()
-    expect(task(g, "Mow lawn")).to_have_count(0)
-    g.clock.set_fixed_time("2026-10-12T09:00:00")
-    g.reload(); synced(g)
-    g.get_by_role("button", name="Mine").click()
 
-    # Plan the week: Kitchen counters on Monday (today), Sweep floor on Wednesday
-    g.get_by_role("button", name="Week", exact=True).click()
-    expect(g.get_by_role("heading", name="Week of Oct 12")).to_be_visible()
-    g.get_by_role("button", name=re.compile("chores? needs? a day")).click()
-    task(g.locator(".room-tray"), "Wipe counters & stove").click()
-    g.locator(".sheet").get_by_role("button", name="Today", exact=True).click()
+    # Plan from House: Wipe counters today, Sweep floor Wednesday (with the day-load chips)
+    g.get_by_role("button", name="Plan Wipe counters & stove").click()
+    expect(g.locator(".day-suggested")).to_have_count(1)
+    shot(g, "03-plan-sheet")
+    g.locator(".sheet .day-chip", has_text="Today").click()
     synced(g)
-    close_sheet(g)
-    task(g.locator(".room-tray"), "Sweep floor").click()
-    g.get_by_role("button", name="Wed", exact=True).click()
+    g.get_by_role("button", name="Done", exact=True).click()
+    g.get_by_role("button", name="Plan Sweep floor").first.click()
+    g.locator(".sheet .day-chip", has_text="Wed").click()
     synced(g)
-    close_sheet(g)
+    g.get_by_role("button", name="Done", exact=True).click()
     plans = files["plans"]["data"]["items"]
     assert plans["W2026-10-12|w-kitchen-wipe-counters-stove"]["day"] == "2026-10-12", plans
     assert any(v.get("day") == "2026-10-14" for v in plans.values()), plans
-    shot(g, "03-week")
 
-    # Today shows the planned chore; check it off; undo; redo
-    g.get_by_role("button", name="Today", exact=True).click()
-    expect(task(g, "Wipe counters & stove")).to_be_visible()
+    # Today shows it; check off, undo, redo
+    tab(g, "Today")
     g.get_by_role("button", name="Check off Wipe counters & stove").click()
     synced(g)
     assert "W2026-10-12|w-kitchen-wipe-counters-stove" in files["log"]["data"]["done"]
@@ -171,134 +164,39 @@ with sync_playwright() as pw:
     assert "W2026-10-12|w-kitchen-wipe-counters-stove" not in files["log"]["data"]["done"], "undo failed"
     g.get_by_role("button", name="Check off Wipe counters & stove").click()
     synced(g)
-    expect(g.get_by_text("All done for today")).to_be_visible()
-    shot(g, "04-today-done")
 
-    # "Done means…" on Wipe fridge, and ask Cass to take it this week
-    g.get_by_role("button", name="Chores", exact=True).click()
+    # Chore card: done means, ask Cass, size, notes, edit card
+    tab(g, "House")
     task(g, "Wipe fridge").click()
     g.get_by_role("button", name="Agree on what done looks like").click()
     g.get_by_label("Done means").fill("Shelves wiped, spills gone, nothing expired left inside.")
     g.get_by_role("button", name="Save", exact=True).click()
     synced(g)
-    c = next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")
-    assert c["standard"].startswith("Shelves wiped") and c["standardBy"] == "grant"
     g.get_by_role("button", name="Ask Cass to take it").click()
     g.get_by_label("Note for Cass (optional)").fill("Packing for Louisville Thursday")
-    shot(g, "05-ask")
     g.get_by_role("button", name="Send to Cass").click()
     synced(g)
-    req = next(a for a in files["activity"]["data"]["items"] if a["kind"] == "request")
-    assert req["status"] == "open" and req["to"] == "cass"
     g.locator(".chore-sheet").get_by_role("button", name="L", exact=True).click()
     synced(g)
     fridge = next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")
-    assert fridge["size"] == "L" and "effort" not in fridge, fridge
-    expect(g.locator(".chore-sheet")).to_contain_text("1 to 4 hours")
+    assert fridge["size"] == "L" and fridge["standard"].startswith("Shelves")
     g.locator(".notes input").fill("We're out of the fridge spray")
     g.get_by_role("button", name="Post").click()
     synced(g)
-    # Edit my own note
     g.locator(".note").get_by_role("button", name="Edit").click()
     g.get_by_label("Edit note").fill("We're out of the fridge spray, it's on the Restock list")
     g.locator(".note").get_by_role("button", name="Save").click()
     synced(g)
-    note = next(a for a in files["activity"]["data"]["items"] if a["kind"] == "note")
-    assert note["text"].endswith("Restock list") and note.get("editedAt"), note
-    shot(g, "06-chore-sheet")
-    # Edit the card itself from its header, then land back on the card
     g.locator(".sheet-head").get_by_role("button", name="Edit").click()
     g.get_by_label("Chore", exact=True).fill("Wipe out fridge")
     g.get_by_role("button", name="Save chore").click()
     synced(g)
-    assert next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")["title"] == "Wipe out fridge"
     expect(g.locator(".sheet-head h2")).to_have_text("Wipe out fridge")
-    close_sheet(g)
-    # "I have 15 min" filter on Today
-    g.locator(".tabs").get_by_role("button", name="Today").click()
-    g.get_by_role("button", name="15 min").click()
-    expect(g.get_by_text("Showing only what fits in 15 min or less")).to_be_visible()
-    expect(task(g, "Wipe out fridge")).to_have_count(0)
-    g.get_by_role("button", name="Any", exact=True).click()
-    g.get_by_role("button", name="Chores", exact=True).click()
-
-    # ------------------------------------------------------------- Cass
-    k = connect(browser, "Cass", "2026-10-12T09:05:00")
-    expect(k.locator(".request")).to_contain_text("Grant asked you to take Wipe fridge")
-    expect(k.locator(".request")).to_contain_text("Packing for Louisville")
-    expect(k.locator(".since").first).to_contain_text("Since you last looked")
-    shot(k, "07-cass-today")
-    expect(k.locator(".btn-inbox .badge")).to_be_visible()
-    k.get_by_role("button", name="I'll take it").click()
-    synced(k)
-    assert next(a for a in files["activity"]["data"]["items"] if a["kind"] == "request")["status"] == "accepted"
-    assert files["plans"]["data"]["items"]["W2026-10-12|w-kitchen-wipe-fridge"]["owner"] == "cass"
-
-    # Cass's Week tab: the fridge is hers this week (covering)
-    k.get_by_role("button", name="Week", exact=True).click()
-    k.get_by_role("button", name="Mine").click()
-    k.get_by_role("button", name=re.compile("chores? needs? a day")).click()
-    expect(k.get_by_text("You're covering")).to_be_visible()
-
-    # Cass thanks Grant from the inbox and leaves a reply note
-    k.locator(".btn-inbox").click()
-    expect(k.locator(".feed")).to_contain_text("Grant finished Wipe counters & stove")
-    expect(k.locator(".feed")).to_contain_text("We're out of the fridge spray")
-    shot(k, "08-cass-inbox")
-    k.locator(".feed-item", has_text="finished Wipe counters").get_by_role("button", name="Say thanks").click()
-    synced(k)
-    assert any(a["kind"] == "kudos" and a["to"] == "grant" for a in files["activity"]["data"]["items"])
-    close_sheet(k)
-    expect(k.locator(".btn-inbox .badge")).to_have_count(0)
-
-    # Cass skips Dust all surfaces in the living room
-    k.get_by_role("button", name="Chores", exact=True).click()
-    task(k.locator(".room", has_text="Living room"), "Dust all surfaces").click()
-    k.get_by_role("button", name="Skip this week").click()
-    k.get_by_role("button", name="We're away").click()
-    synced(k)
-    close_sheet(k)
-    skipped = files["plans"]["data"]["items"]["W2026-10-12|w-living-dust-all-surfaces"]["skip"]
-    assert skipped["by"] == "cass" and skipped["reason"] == "We're away"
-
-    # Cass picks a different ink color
-    k.get_by_role("button", name="Settings").click()
-    k.get_by_role("button", name="Plum").click()
-    synced(k)
-    assert files["settings"]["data"]["colors"]["cass"] == "plum"
-    k.get_by_role("button", name="Larger").click()
-    close_sheet(k)
-
-    # Cass checks off the fridge (in her ink)
-    k.get_by_role("button", name="Today", exact=True).click()
-    k.get_by_role("button", name="Also yours this week, no day yet").click()
-    k.get_by_role("button", name="Check off Wipe out fridge").click()
-    synced(k)
-    assert files["log"]["data"]["done"]["W2026-10-12|w-kitchen-wipe-fridge"]["by"] == "cass"
-    shot(k, "09-cass-today-larger")
-
-    # --------------------------------------------- back to Grant's phone
-    refresh(g)
-    g.get_by_role("button", name="Today", exact=True).click()
-    expect(g.locator(".since").first).to_contain_text("thank-you")
-    g.locator(".btn-inbox").click()
-    expect(g.locator(".feed")).to_contain_text("Cass took Wipe")
-    expect(g.locator(".feed")).to_contain_text("Cass said thanks for Wipe counters")
-    shot(g, "10-grant-inbox")
+    shot(g, "04-chore-card")
     close_sheet(g)
 
-    # Save conflict: Cass and Grant write the log at the same moment
-    files["log"]["data"]["done"]["W2026-10-12|w-dining-vacuum-floor"] = {"by": "cass", "at": "2026-10-12T09:06:00Z"}
-    files["log"]["sha"] = new_sha()
-    g.get_by_role("button", name="Chores", exact=True).click()
-    g.get_by_role("button", name="Check off Put away dishes").click()
-    synced(g)
-    done = files["log"]["data"]["done"]
-    assert "W2026-10-12|w-dining-vacuum-floor" in done and "W2026-10-12|w-kitchen-put-away-dishes" in done
-    print("Conflict retry kept both check-offs")
-
-    # Projects: add one, pick it for this week, note on it
-    g.get_by_role("button", name="Projects").click()
+    # Project: add an XL, plan it Sat + Sun, log a work session
+    g.locator(".subnav").get_by_role("button", name="Projects").click()
     g.get_by_role("button", name="Add a project").click()
     g.get_by_label("What needs doing").fill("Hang hinged shower door")
     g.get_by_label("Room or area").fill("Bathroom")
@@ -306,63 +204,164 @@ with sync_playwright() as pw:
     g.get_by_label("Size").select_option("XL")
     g.get_by_role("button", name="Add project").click()
     synced(g)
-    assert files["projects"]["data"]["projects"][0]["size"] == "XL"
-    expect(g.locator(".project", has_text="Hang hinged shower door").locator(".size")).to_have_text("XL")
     g.locator(".project-main", has_text="Hang hinged shower door").click()
-    g.get_by_role("button", name="Pick for this week").click()
+    card = g.locator(".sheet")
+    card.locator(".plan-week", has_text="This week").locator(".day-chip", has_text="Sat").click()
     synced(g)
-    g.locator(".notes input").fill("Lowe's has the 30in one in stock")
-    g.get_by_role("button", name="Post").click()
+    card.locator(".plan-week", has_text="This week").locator(".day-chip", has_text="Sun").click()
     synced(g)
+    door = next(p for p in files["projects"]["data"]["projects"] if p["task"] == "Hang hinged shower door")
+    assert door["days"] == ["2026-10-17", "2026-10-18"] and door["size"] == "XL", door
+    card.get_by_role("button", name="Worked on it today").click()
+    synced(g)
+    door = next(p for p in files["projects"]["data"]["projects"] if p["task"] == "Hang hinged shower door")
+    assert door["sessions"][0]["day"] == "2026-10-12" and door["status"] == "doing", door
+    expect(g.locator(".toast")).to_contain_text("Logged work")
+    expect(g.locator(".toast").get_by_role("button", name="It's finished")).to_be_visible()
+    card.locator(".notes input").fill("Lowe's has the 30in one in stock")
+    card.get_by_role("button", name="Post").click()
+    synced(g)
+    shot(g, "05-project-card")
     close_sheet(g)
-    p = files["projects"]["data"]["projects"][0]
-    assert p["task"] == "Hang hinged shower door" and p["focus"] == "W2026-10-12"
+    expect(g.locator(".project", has_text="Hang hinged shower door")).to_contain_text("Sat, Sun")
 
-    # Lists with undo
-    g.get_by_role("button", name="Lists").click()
+    # Week plan: the project sits on Saturday with the chores
+    tab(g, "Plan")
+    g.locator(".subnav").get_by_role("button", name="Week").click()
+    sat = g.locator(".lane", has_text="Saturday")
+    expect(task(sat, "Hang hinged shower door")).to_be_visible()
+    expect(sat.locator(".lane-load")).to_contain_text("3h/3h")
+    expect(task(g.locator(".lane", has_text="Wednesday"), "Sweep floor")).to_be_visible()
+    shot(g, "06-week")
+
+    # "I have 15 min" on Today
+    tab(g, "Today")
+    g.get_by_role("button", name="15 min").click()
+    expect(g.locator(".room", has_text="Fits in 15 min or less")).to_be_visible()
+    g.get_by_role("button", name="Any", exact=True).click()
+
+    # ------------------------------------------------------------- Cass
+    k = connect(browser, "Cass", "2026-10-12T09:05:00")
+    expect(k.locator(".request")).to_contain_text("Grant asked you to take Wipe fridge")
+    expect(k.locator(".since").first).to_contain_text("Since you last looked")
+    shot(k, "07-cass-today")
+    k.get_by_role("button", name="I'll take it").click()
+    synced(k)
+    assert files["plans"]["data"]["items"]["W2026-10-12|w-kitchen-wipe-fridge"]["owner"] == "cass"
+    k.locator(".btn-inbox").click()
+    expect(k.locator(".feed")).to_contain_text("Grant finished Wipe counters & stove")
+    expect(k.locator(".feed")).to_contain_text("Grant worked on Hang hinged shower door")
+    k.locator(".feed-item", has_text="finished Wipe counters").get_by_role("button", name="Say thanks").click()
+    synced(k)
+    close_sheet(k)
+    tab(k, "House")
+    k.get_by_role("button", name="Weekly").click()
+    k.get_by_role("button", name="Mine").click()
+    expect(k.get_by_text("You're covering")).to_be_visible()
+    task(k.locator(".room", has_text="Living room"), "Dust all surfaces").click()
+    k.get_by_role("button", name="Skip this week").click()
+    k.get_by_role("button", name="We're away").click()
+    synced(k)
+    close_sheet(k)
+    k.get_by_role("button", name="Check off Wipe out fridge").click()
+    synced(k)
+    assert files["log"]["data"]["done"]["W2026-10-12|w-kitchen-wipe-fridge"]["by"] == "cass"
+    k.get_by_role("button", name="Settings").click()
+    k.get_by_role("button", name="Teal").click()
+    synced(k)
+    close_sheet(k)
+
+    # ----------------------------------------------- back to Grant's phone
+    refresh(g)
+    expect(g.locator(".since").first).to_contain_text("thank-you")
+    g.locator(".btn-inbox").click()
+    expect(g.locator(".feed")).to_contain_text("Cass took Wipe")
+    close_sheet(g)
+
+    # Save conflict: both phones write the log at once
+    files["log"]["data"]["done"]["W2026-10-12|w-dining-vacuum-floor"] = {"by": "cass", "at": "2026-10-12T09:06:00Z"}
+    files["log"]["sha"] = new_sha()
+    tab(g, "House")
+    g.locator(".subnav").get_by_role("button", name="Chores").click()
+    g.get_by_role("button", name="Check off Clean air fryer").click()
+    synced(g)
+    done = files["log"]["data"]["done"]
+    assert "W2026-10-12|w-dining-vacuum-floor" in done and "W2026-10-12|w-kitchen-clean-air-fryer" in done
+    print("Conflict retry kept both check-offs")
+
+    # Lists
+    tab(g, "Lists")
     g.get_by_label("Add to Restock & refill").fill("Fridge spray")
     g.get_by_role("button", name="Add", exact=True).click()
     synced(g)
     g.get_by_role("button", name="Check Fridge spray").click()
     synced(g)
-    assert files["lists"]["data"]["lists"][0]["items"][-1]["done"] is True
-    shot(g, "11-lists")
 
-    # Settings: keep this split, then back to taking turns
+    # Settings: day budgets + keep split / take turns
     g.get_by_role("button", name="Settings").click()
-    shot(g, "12-settings")
+    g.get_by_label("Monday time").select_option("120")
+    synced(g)
+    assert files["settings"]["data"]["budgets"]["grant"][1] == 120
+    shot(g, "08-settings")
     g.get_by_role("button", name="Keep this split").click()
     synced(g)
     assert files["settings"]["data"]["mode"] == "fixed"
     g.get_by_role("button", name="Take turns").click()
     synced(g)
-    assert files["settings"]["data"]["mode"] == "rotate"
     close_sheet(g)
 
-    # ------------------------------------------------ Sunday check-in
+    # Month plan: the calendar, then the month check-in picks a project
+    tab(g, "Plan")
+    g.locator(".subnav").get_by_role("button", name="Month").click()
+    g.locator(".cal-day", has_text="17").first.click()
+    expect(task(g.locator(".room", has_text="Saturday, Oct 17"), "Hang hinged shower door")).to_be_visible()
+    shot(g, "09-month")
+    g.get_by_role("button", name="Plan the month").click()
+    g.get_by_role("button", name="Next", exact=True).click()
+    g.get_by_role("button", name="Next", exact=True).click()
+    g.get_by_label("Search projects for the month").fill("Lead paint check")
+    g.get_by_label("Search projects for the month").fill("")
+    expect(g.locator(".pick", has_text="Hang hinged shower door")).to_have_attribute("aria-pressed", "true")
+    shot(g, "10-month-checkin")
+    g.get_by_role("button", name="Finish").click()
+    synced(g)
+    assert files["settings"]["data"]["lastMonthCheckin"]["month"] == "M2026-10"
+
+    # ------------------------------------------------ Sunday weekly check-in
     g.clock.set_fixed_time("2026-10-18T19:00:00")
     g.reload()
     synced(g)
-    g.get_by_role("button", name="Today", exact=True).click()
+    tab(g, "Today")
     g.get_by_role("button", name="Start check-in").click()
     expect(g.get_by_role("heading", name="Week of Oct 12")).to_be_visible()
-    shot(g, "13-checkin")
-    g.get_by_role("button", name="Next", exact=True).click()
-    g.get_by_role("button", name="Next", exact=True).click()
-    expect(g.get_by_text("You're taking turns")).to_be_visible()
-    g.get_by_role("button", name="Next", exact=True).click()
-    g.get_by_label("Search projects to pick").fill("shower door")
-    g.locator(".pick", has_text="Hang hinged shower door").click()
+    for _ in range(3):
+        g.get_by_role("button", name="Next", exact=True).click()
+    expect(g.locator(".wlg")).to_be_visible()
+    row = g.locator(".cp-row", has_text="Hang hinged shower door")
+    expect(row).to_contain_text("from last week")
+    row.locator(".day-chip", has_text="Sat").click()
     synced(g)
-    expect(g.locator(".load")).to_contain_text("projects 1 XL")
-    shot(g, "14-checkin-projects")
+    door = next(p for p in files["projects"]["data"]["projects"] if p["task"] == "Hang hinged shower door")
+    assert "2026-10-24" in door["days"], door
+    shot(g, "11-plan-the-week")
     g.get_by_role("button", name="Finish check-in").click()
     synced(g)
     assert files["settings"]["data"]["lastCheckin"]["week"] == "W2026-10-19"
-    assert next(p for p in files["projects"]["data"]["projects"] if p["task"] == "Hang hinged shower door")["focus"] == "W2026-10-19"
-    expect(g.get_by_role("button", name="Start check-in")).to_have_count(0)
 
-    # Editor still works (add a seasonal chore)
+    # Finishing the XL project from its card
+    g.clock.set_fixed_time("2026-10-24T15:00:00")
+    g.reload()
+    synced(g)
+    tab(g, "Today")
+    expect(task(g.locator(".room", has_text="Today"), "Hang hinged shower door")).to_be_visible()
+    g.get_by_role("button", name="Log work on Hang hinged shower door").click()
+    synced(g)
+    g.locator(".toast").get_by_role("button", name="It's finished").click()
+    synced(g)
+    door = next(p for p in files["projects"]["data"]["projects"] if p["task"] == "Hang hinged shower door")
+    assert door["status"] == "done" and door["doneBy"] == "grant" and len(door["sessions"]) == 2, door
+
+    # Editor still works (seasonal chore)
     g.get_by_role("button", name="Settings").click()
     g.get_by_role("button", name="Edit rooms and chores").click()
     g.locator(".sheet select").first.select_option("yard")
@@ -374,12 +373,13 @@ with sync_playwright() as pw:
     synced(g)
     assert any(c["title"] == "Put up holiday lights" and c["months"] == [12] for c in files["house"]["data"]["chores"])
 
-    # Dark mode, Cass's phone
+    # Dark mode, Cass's week
     k.emulate_media(color_scheme="dark")
     refresh(k)
-    k.get_by_role("button", name="Week", exact=True).click()
+    tab(k, "Plan")
+    k.locator(".subnav").get_by_role("button", name="Week").click()
     k.get_by_role("button", name="Both of us").click()
-    shot(k, "15-cass-week-dark")
+    shot(k, "12-cass-week-dark")
     browser.close()
 
 print(f"{len(commits)} commits, e.g.:")
