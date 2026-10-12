@@ -190,14 +190,37 @@ with sync_playwright() as pw:
     synced(g)
     req = next(a for a in files["activity"]["data"]["items"] if a["kind"] == "request")
     assert req["status"] == "open" and req["to"] == "cass"
-    g.get_by_role("button", name="Big").click()
+    g.locator(".chore-sheet").get_by_role("button", name="L", exact=True).click()
     synced(g)
-    assert next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")["effort"] == 3
+    fridge = next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")
+    assert fridge["size"] == "L" and "effort" not in fridge, fridge
+    expect(g.locator(".chore-sheet")).to_contain_text("1 to 4 hours")
     g.locator(".notes input").fill("We're out of the fridge spray")
     g.get_by_role("button", name="Post").click()
     synced(g)
+    # Edit my own note
+    g.locator(".note").get_by_role("button", name="Edit").click()
+    g.get_by_label("Edit note").fill("We're out of the fridge spray, it's on the Restock list")
+    g.locator(".note").get_by_role("button", name="Save").click()
+    synced(g)
+    note = next(a for a in files["activity"]["data"]["items"] if a["kind"] == "note")
+    assert note["text"].endswith("Restock list") and note.get("editedAt"), note
     shot(g, "06-chore-sheet")
+    # Edit the card itself from its header, then land back on the card
+    g.locator(".sheet-head").get_by_role("button", name="Edit").click()
+    g.get_by_label("Chore", exact=True).fill("Wipe out fridge")
+    g.get_by_role("button", name="Save chore").click()
+    synced(g)
+    assert next(c for c in files["house"]["data"]["chores"] if c["id"] == "w-kitchen-wipe-fridge")["title"] == "Wipe out fridge"
+    expect(g.locator(".sheet-head h2")).to_have_text("Wipe out fridge")
     close_sheet(g)
+    # "I have 15 min" filter on Today
+    g.locator(".tabs").get_by_role("button", name="Today").click()
+    g.get_by_role("button", name="15 min").click()
+    expect(g.get_by_text("Showing only what fits in 15 min or less")).to_be_visible()
+    expect(task(g, "Wipe out fridge")).to_have_count(0)
+    g.get_by_role("button", name="Any", exact=True).click()
+    g.get_by_role("button", name="Chores", exact=True).click()
 
     # ------------------------------------------------------------- Cass
     k = connect(browser, "Cass", "2026-10-12T09:05:00")
@@ -249,7 +272,7 @@ with sync_playwright() as pw:
     # Cass checks off the fridge (in her ink)
     k.get_by_role("button", name="Today", exact=True).click()
     k.get_by_role("button", name="Also yours this week, no day yet").click()
-    k.get_by_role("button", name="Check off Wipe fridge").click()
+    k.get_by_role("button", name="Check off Wipe out fridge").click()
     synced(k)
     assert files["log"]["data"]["done"]["W2026-10-12|w-kitchen-wipe-fridge"]["by"] == "cass"
     shot(k, "09-cass-today-larger")
@@ -259,7 +282,7 @@ with sync_playwright() as pw:
     g.get_by_role("button", name="Today", exact=True).click()
     expect(g.locator(".since").first).to_contain_text("thank-you")
     g.locator(".btn-inbox").click()
-    expect(g.locator(".feed")).to_contain_text("Cass took Wipe fridge")
+    expect(g.locator(".feed")).to_contain_text("Cass took Wipe")
     expect(g.locator(".feed")).to_contain_text("Cass said thanks for Wipe counters")
     shot(g, "10-grant-inbox")
     close_sheet(g)
@@ -280,8 +303,11 @@ with sync_playwright() as pw:
     g.get_by_label("What needs doing").fill("Hang hinged shower door")
     g.get_by_label("Room or area").fill("Bathroom")
     g.get_by_label("Estimated cost").fill("$250–600")
+    g.get_by_label("Size").select_option("XL")
     g.get_by_role("button", name="Add project").click()
     synced(g)
+    assert files["projects"]["data"]["projects"][0]["size"] == "XL"
+    expect(g.locator(".project", has_text="Hang hinged shower door").locator(".size")).to_have_text("XL")
     g.locator(".project-main", has_text="Hang hinged shower door").click()
     g.get_by_role("button", name="Pick for this week").click()
     synced(g)
@@ -325,8 +351,10 @@ with sync_playwright() as pw:
     g.get_by_role("button", name="Next", exact=True).click()
     expect(g.get_by_text("You're taking turns")).to_be_visible()
     g.get_by_role("button", name="Next", exact=True).click()
+    g.get_by_label("Search projects to pick").fill("shower door")
     g.locator(".pick", has_text="Hang hinged shower door").click()
     synced(g)
+    expect(g.locator(".load")).to_contain_text("projects 1 XL")
     shot(g, "14-checkin-projects")
     g.get_by_role("button", name="Finish check-in").click()
     synced(g)

@@ -21,6 +21,7 @@ type Person = "grant" | "cass";
 type Owner = Person | "both";
 type Freq = "weekly" | "monthly" | "seasonal";
 type Zone = "A" | "B" | "shared";
+type Size = "S" | "M" | "L" | "XL";
 
 interface Room { id: string; name: string; area: string; zone: Zone; fixedOwner: Owner; pinned?: boolean }
 interface Chore {
@@ -36,8 +37,9 @@ interface Chore {
   standard?: string;
   standardBy?: Person;
   standardAt?: string;
-  /** 1 quick, 2 medium (default), 3 big. Drives the fairness balance. */
+  /** Legacy 1 quick / 2 medium / 3 big. Superseded by `size`; read via choreSize(). */
   effort?: 1 | 2 | 3;
+  size?: Size;
   /** Split a room's chores between you: overrides the room's side / keep-rooms owner. */
   zone?: Zone;
   fixedOwner?: Owner;
@@ -58,6 +60,8 @@ interface Project {
   start?: string; cost?: string; notes?: string; links?: string; doneAt?: string; doneBy?: Person;
   /** weekKey of the week it was picked for in a check-in. */
   focus?: string;
+  /** S/M/L/XL. Falls back to the sheet's 1–5 effort (1 = hardest); read via projectSize(). */
+  size?: Size;
 }
 interface Projects { version: number; projects: Project[] }
 interface ListItem { id: string; text: string; done: boolean; by?: Person; at?: string }
@@ -77,7 +81,7 @@ type Kind = "note" | "request" | "kudos" | "nudge" | "skip" | "standard" | "took
 interface Activity {
   id: string; at: string; by: Person; kind: Kind;
   ref?: Ref; text?: string; to?: Person;
-  status?: "open" | "accepted" | "declined"; permanent?: boolean; answeredAt?: string;
+  status?: "open" | "accepted" | "declined"; permanent?: boolean; answeredAt?: string; editedAt?: string;
 }
 interface ActivityFile { version: number; items: Activity[] }
 
@@ -304,9 +308,21 @@ function monthRange(ms: number[]): string {
   const contiguous = sorted.every((m, i) => i === 0 || m === sorted[i - 1] + 1);
   return contiguous && sorted.length > 2 ? `${MONTHS[sorted[0] - 1]}–${MONTHS[sorted[sorted.length - 1] - 1]}` : sorted.map((m) => MONTHS[m - 1]).join(", ");
 }
-const effortOf = (c: Chore) => c.effort ?? 2;
-const EFFORT_NAME = ["", "Quick", "Medium", "Big"];
-const projectWeight = (p: Project) => [0, 5, 4, 3, 2, 1][p.effort] ?? 3;
+const SIZES: Size[] = ["S", "M", "L", "XL"];
+const SIZE_WEIGHT: Record<Size, number> = { S: 1, M: 2, L: 4, XL: 8 };
+const SIZE_HINT: Record<Size, string> = { S: "15 min or less", M: "15 to 60 min", L: "1 to 4 hours", XL: "A day or a weekend" };
+const choreSize = (c: Chore): Size => c.size ?? (c.effort === 1 ? "S" : c.effort === 3 ? "L" : "M");
+const projectSize = (p: Project): Size => p.size ?? (p.effort >= 5 ? "S" : p.effort === 4 ? "M" : p.effort === 3 ? "L" : "XL");
+const effortFromSize: Record<Size, number> = { S: 5, M: 4, L: 3, XL: 2 };
+type Fit = "any" | Size;
+const FITS: { value: Fit; label: string }[] = [
+  { value: "any", label: "Any" }, { value: "S", label: "15 min" }, { value: "M", label: "1 hr" },
+  { value: "L", label: "Afternoon" }, { value: "XL", label: "Weekend" },
+];
+const fits = (size: Size, fit: Fit) => fit === "any" || SIZE_WEIGHT[size] <= SIZE_WEIGHT[fit];
+function sizeTally(sizes: Size[]): string {
+  return SIZES.filter((z) => sizes.includes(z)).map((z) => `${sizes.filter((x) => x === z).length} ${z}`).join(", ");
+}
 
 /** Everything about one chore for one period (this week / this month). */
 interface Inst {
@@ -535,9 +551,16 @@ function makeActions(data: Data, me: Person, mutate: Mutate, toast: Ctx["toast"]
         `${N} updated what done means for "${c.title}"`);
       toast("Saved what done means");
     },
-    setEffort(c: Chore, e: 1 | 2 | 3) {
-      mutate("house", (d) => { const x = d.chores.find((y) => y.id === c.id); if (x) x.effort = e; return d; },
-        `${N} set "${c.title}" to ${EFFORT_NAME[e].toLowerCase()}`);
+    setSize(c: Chore, z: Size) {
+      mutate("house", (d) => { const x = d.chores.find((y) => y.id === c.id); if (x) { x.size = z; delete x.effort; } return d; },
+        `${N} sized "${c.title}" ${z}`);
+    },
+    editNote(a: Activity, text: string) {
+      const t = text.trim();
+      if (!t) return;
+      mutate("activity", (d) => { const x = d.items.find((y) => y.id === a.id); if (x) { x.text = t; x.editedAt = nowIso(); } return d; },
+        `${N} edited a note on "${a.ref?.title}"`);
+      toast("Note updated");
     },
     saveChore(c: Chore) {
       const isNew = !data.house.chores.some((x) => x.id === c.id);
@@ -647,7 +670,7 @@ function Segmented<T extends string | number>({ value, options, onChange, label,
   );
 }
 
-function Sheet({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+function Sheet({ title, onClose, children, wide, action }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean; action?: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -662,7 +685,10 @@ function Sheet({ title, onClose, children, wide }: { title: string; onClose: () 
       <div className={wide ? "sheet sheet-tall" : "sheet"} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}>
         <div className="sheet-head">
           <h2>{title}</h2>
-          <button type="button" className="btn-quiet" onClick={onClose}>Close</button>
+          <span className="sheet-actions">
+            {action}
+            <button type="button" className="btn-quiet" onClick={onClose}>Close</button>
+          </span>
         </div>
         <div className="sheet-body">{children}</div>
       </div>
@@ -684,7 +710,7 @@ function Bars({ rows }: { rows: { p: Person; done: number; total: number }[] }) 
   );
 }
 
-/** Effort balance this month: chores weighted by effort, projects by size. */
+/** Effort balance this month: everything weighted by size (S1 M2 L4 XL8). */
 function useBalance(at: Date) {
   const { data, rooms } = useApp();
   return useMemo(() => {
@@ -695,12 +721,12 @@ function useBalance(at: Date) {
       const d = new Date(mark.at);
       if (d.getMonth() !== m || d.getFullYear() !== y) continue;
       const c = byId.get(k.split("|")[1]);
-      pts[mark.by] += c ? effortOf(c) : 2;
+      pts[mark.by] += c ? SIZE_WEIGHT[choreSize(c)] : 2;
     }
     for (const p of data.projects.projects) {
       if (p.status !== "done" || !p.doneAt || !p.doneBy) continue;
       const d = new Date(p.doneAt);
-      if (d.getMonth() === m && d.getFullYear() === y) pts[p.doneBy] += projectWeight(p);
+      if (d.getMonth() === m && d.getFullYear() === y) pts[p.doneBy] += SIZE_WEIGHT[projectSize(p)];
     }
     return pts;
   }, [data, rooms, at]);
@@ -733,11 +759,15 @@ function notesFor(data: Data, type: RefType, id: string) {
   return data.activity.items.filter((a) => a.kind === "note" && a.ref?.type === type && a.ref.id === id);
 }
 
+function SizeTag({ size }: { size: Size }) {
+  return <span className={`size size-${size}`} title={SIZE_HINT[size]}>{size}</span>;
+}
+
 function TaskRow({ i, showRoom, showOwner, showDay }: { i: Inst; showRoom?: boolean; showOwner?: boolean; showDay?: boolean }) {
   const { act, openChore, rooms, now, data, me } = useApp();
   const on = !!i.mark;
   const notes = notesFor(data, "chore", i.c.id).length;
-  const meta: React.ReactNode[] = [];
+  const meta: React.ReactNode[] = [<SizeTag key="z" size={choreSize(i.c)} />];
   if (showRoom) meta.push(<span key="r">{rooms.get(i.c.room)?.name}</span>);
   if (showDay && i.plan?.day && !on) {
     const d = parseDay(i.plan.day);
@@ -762,6 +792,19 @@ function TaskRow({ i, showRoom, showOwner, showDay }: { i: Inst; showRoom?: bool
       {showOwner && <span className="task-owner"><OwnerMark owner={i.owner} size="sm" /></span>}
     </li>
   );
+}
+
+function FitPicker({ value, onChange }: { value: Fit; onChange: (f: Fit) => void }) {
+  return (
+    <div className="fit">
+      <span className="fit-label">I have</span>
+      <Segmented small label="I have" value={value} onChange={onChange} options={FITS} />
+    </div>
+  );
+}
+function useFit(key: string): [Fit, (f: Fit) => void] {
+  const [fit, setFit] = useState<Fit>(() => { const v = lsGet(key) as Fit; return FITS.some((f) => f.value === v) ? v : "any"; });
+  return [fit, (f) => { setFit(f); lsSet(key, f); }];
 }
 
 /* ================================================================ Today */
@@ -799,7 +842,9 @@ function TodayView() {
   const today = dayKey(now);
   const all = data.house.chores.filter((c) => isDue(c, now)).map((c) => inst(c));
   const mine = all.filter((i) => isFor(i.owner, me));
-  const pending = mine.filter((i) => !i.mark && !i.skipped);
+  const [fit, setFit] = useFit("lc:fit");
+  const [openProject, setOpenProject] = useState<Project | null>(null);
+  const pending = mine.filter((i) => !i.mark && !i.skipped && fits(choreSize(i.c), fit));
   const open = pending.filter((i) => !i.c.prn);
   const todays = pending.filter((i) => i.plan?.day === today);
   const overdue = pending.filter((i) => i.plan?.day && i.plan.day < today);
@@ -810,8 +855,13 @@ function TodayView() {
   const focus = data.projects.projects.filter((p) => p.focus === weekKey(now) && p.status !== "done" && isFor(p.lead, me));
   const unread = useUnread();
   const showCheckin = checkinDue(data, now);
-  const [showWeek, setShowWeek] = useState(false);
-  const [showMonth, setShowMonth] = useState(false);
+  const [showWeekState, setShowWeek] = useState(false);
+  const [showMonthState, setShowMonth] = useState(false);
+  const showWeek = showWeekState || fit !== "any";
+  const showMonth = showMonthState || fit !== "any";
+  const fitProjects = fit === "any" ? [] : data.projects.projects
+    .filter((p) => p.status !== "done" && isFor(p.lead, me) && fits(projectSize(p), fit))
+    .sort((a, b) => a.priority - b.priority || SIZE_WEIGHT[projectSize(a)] - SIZE_WEIGHT[projectSize(b)]).slice(0, 8);
 
   const nothing = todays.length + overdue.length === 0;
   return (
@@ -823,6 +873,8 @@ function TodayView() {
             ? doneToday.length ? `You've done ${doneToday.length} today. Nothing else is planned.` : "Nothing planned for today."
             : `${todays.length + overdue.length} planned for today${doneToday.length ? `, ${doneToday.length} done` : ""}.`}
         </p>
+        <FitPicker value={fit} onChange={setFit} />
+        {fit !== "any" && <p className="soft small">Showing only what fits in {SIZE_HINT[fit].toLowerCase()}.</p>}
       </header>
 
       {unread.length > 0 && (
@@ -862,9 +914,24 @@ function TodayView() {
       {focus.length > 0 && (
         <div className="room">
           <div className="room-head"><h3>Projects this week</h3></div>
-          <ul className="ahead">{focus.map((p) => <li key={p.id}><span>{p.task}</span><span className="soft">{p.category}</span></li>)}</ul>
+          <ul className="ahead">{focus.map((p) => (
+            <li key={p.id}><button type="button" className="link-row" onClick={() => setOpenProject(p)}>
+              <span>{p.task}</span><span className="soft"><SizeTag size={projectSize(p)} /> {p.category}</span>
+            </button></li>
+          ))}</ul>
         </div>
       )}
+      {fitProjects.length > 0 && (
+        <div className="room">
+          <div className="room-head"><h3>Projects that fit</h3></div>
+          <ul className="ahead">{fitProjects.map((p) => (
+            <li key={p.id}><button type="button" className="link-row" onClick={() => setOpenProject(p)}>
+              <span>{p.task}</span><span className="soft"><SizeTag size={projectSize(p)} /> {p.category}</span>
+            </button></li>
+          ))}</ul>
+        </div>
+      )}
+      {openProject && <ProjectSheet p={openProject} onClose={() => setOpenProject(null)} />}
 
       {unplannedWeek.length > 0 && (
         <div className="room room-quiet">
@@ -1024,6 +1091,8 @@ const SKIP_REASONS = ["Not needed this time", "We're away", "Doing it next week"
 function Notes({ refObj }: { refObj: Ref }) {
   const { data, act, me, now } = useApp();
   const [text, setText] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   const notes = notesFor(data, refObj.type, refObj.id);
   return (
     <div className="notes">
@@ -1032,9 +1101,20 @@ function Notes({ refObj }: { refObj: Ref }) {
       <ul className="note-list">
         {notes.map((n) => (
           <li key={n.id} className="note" style={{ borderColor: ink(n.by) }}>
-            <span className="note-by" style={{ color: ink(n.by) }}>{NAME[n.by]}, {when(n.at, now)}</span>
-            <span className="note-text">{n.text}</span>
-            {n.by === me && <button type="button" className="link-btn" onClick={() => act.deleteNote(n)}>Delete</button>}
+            <span className="note-by" style={{ color: ink(n.by) }}>{NAME[n.by]}, {when(n.at, now)}{n.editedAt ? " (edited)" : ""}</span>
+            {editing === n.id ? (
+              <form className="add-row" onSubmit={(e) => { e.preventDefault(); act.editNote(n, draft); setEditing(null); }}>
+                <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Edit note" />
+                <button type="button" className="btn-quiet" onClick={() => setEditing(null)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={!draft.trim()}>Save</button>
+              </form>
+            ) : <span className="note-text">{n.text}</span>}
+            {n.by === me && editing !== n.id && (
+              <span className="note-actions">
+                <button type="button" className="link-btn" onClick={() => { setDraft(n.text ?? ""); setEditing(n.id); }}>Edit</button>
+                <button type="button" className="link-btn" onClick={() => act.deleteNote(n)}>Delete</button>
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -1049,6 +1129,7 @@ function Notes({ refObj }: { refObj: Ref }) {
 function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: () => void; onEdit: (c: Chore) => void }) {
   const { data, me, now, act, inst, rooms } = useApp();
   const c = data.house.chores.find((x) => x.id === choreId);
+  useEffect(() => { if (!c) onClose(); }, [c, onClose]);
   const [mode, setMode] = useState<"none" | "ask" | "skip" | "standard">("none");
   const [askNote, setAskNote] = useState("");
   const [askPerm, setAskPerm] = useState(false);
@@ -1066,7 +1147,7 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
   const freqLabel = c.freq === "weekly" ? `Every week${span ? `, ${span}` : ""}` : c.freq === "monthly" ? `Every month${span ? `, ${span}` : ""}` : `In ${span}`;
 
   return (
-    <Sheet title={c.title} onClose={onClose}>
+    <Sheet title={c.title} onClose={onClose} action={<button type="button" className="btn-quiet" onClick={() => onEdit(c)}>Edit</button>}>
       <div className="chore-sheet">
         <p className="soft">{rooms.get(c.room)?.name}. {freqLabel}{c.prn ? ", as needed" : ""}.</p>
         <p className="who-line">
@@ -1139,8 +1220,9 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
 
         <div className="block">
           <h4>Size</h4>
-          <Segmented small label="Size" value={effortOf(c)} onChange={(e) => act.setEffort(c, e as 1 | 2 | 3)}
-            options={[{ value: 1, label: "Quick" }, { value: 2, label: "Medium" }, { value: 3, label: "Big" }]} />
+          <Segmented small label="Size" value={choreSize(c)} onChange={(z) => act.setSize(c, z)}
+            options={SIZES.map((z) => ({ value: z, label: z }))} />
+          <p className="soft small">{SIZE_HINT[choreSize(c)]}</p>
         </div>
 
         {!i.mark && (
@@ -1187,9 +1269,6 @@ function ChoreSheet({ choreId, onClose, onEdit }: { choreId: string; onClose: ()
 
         <Notes refObj={{ type: "chore", id: c.id, title: c.title }} />
 
-        <div className="form-actions sheet-foot">
-          <button type="button" className="link-btn" onClick={() => onEdit(c)}>Edit name, room or schedule</button>
-        </div>
       </div>
     </Sheet>
   );
@@ -1337,6 +1416,9 @@ function checkinDue(data: Data, now: Date) {
 function CheckinSheet({ onClose }: { onClose: () => void }) {
   const { data, me, now, inst, act } = useApp();
   const [step, setStep] = useState(0);
+  const [pq, setPq] = useState("");
+  const [pfit, setPfit] = useState<Fit>("any");
+  const [showAll, setShowAll] = useState(false);
   const sunday = now.getDay() === 0;
   const reviewDate = sunday ? now : addDays(now, -7);
   const planDate = sunday ? addDays(now, 1) : now;
@@ -1349,7 +1431,18 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
   });
   const doneByThem = review.filter((i) => i.mark?.by === other(me)).length;
   const openReqs = data.activity.items.filter((a) => a.kind === "request" && a.status === "open");
-  const openProjects = data.projects.projects.filter((p) => p.status !== "done").sort((a, b) => a.priority - b.priority || b.effort - a.effort);
+  const openProjects = data.projects.projects.filter((p) => p.status !== "done")
+    .sort((a, b) => a.priority - b.priority || SIZE_WEIGHT[projectSize(a)] - SIZE_WEIGHT[projectSize(b)]);
+  const load = (["grant", "cass"] as Person[]).map((p) => {
+    const chores = data.house.chores.filter((c) => c.freq === "weekly" && !c.prn && isDue(c, planDate))
+      .map((c) => inst(c, planDate)).filter((i) => isFor(i.owner, p));
+    const chorePts = chores.reduce((n, i) => n + SIZE_WEIGHT[choreSize(i.c)], 0);
+    const proj = openProjects.filter((x) => x.focus === planWeek && isFor(x.lead, p));
+    const projPts = proj.reduce((n, x) => n + SIZE_WEIGHT[projectSize(x)], 0);
+    return { p, chorePts, proj, projPts, total: chorePts + projPts };
+  });
+  const [lo, hi] = [...load].sort((a, b) => a.total - b.total);
+  const lopsided = lo.total > 0 && hi.total >= lo.total * 1.5;
   const picked = openProjects.filter((p) => p.focus === planWeek);
   const steps = ["How last week went", "Open requests", "Who does what", "Projects for this week"];
   const rotating = data.house.rooms.filter((r) => !r.pinned && r.zone !== "shared");
@@ -1412,20 +1505,42 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
         {step === 3 && (
           <>
             <p className="soft">Pick a few. They'll show on both Today screens this week.</p>
+            <div className="load">
+              {load.map((x) => (
+                <div key={x.p} className="load-row">
+                  <span className="progress-name" style={{ color: ink(x.p) }}>{NAME[x.p]}</span>
+                  <span className="load-bar"><span style={{ width: `${Math.min(100, (x.total / Math.max(hi.total, 1)) * 100)}%`, background: ink(x.p) }} /></span>
+                  <span className="small soft">Chores {x.chorePts}{x.proj.length ? `, projects ${sizeTally(x.proj.map(projectSize))}` : ""}. Total {x.total}</span>
+                </div>
+              ))}
+              {lopsided && <p className="small late">{NAME[hi.p]}'s week is a lot heavier. Swap a project, or hand off a chore.</p>}
+              <p className="soft small">Points: S 1, M 2, L 4, XL 8. Projects led together count for both of you.</p>
+            </div>
+            <input className="search" type="search" placeholder="Search projects" value={pq} onChange={(e) => setPq(e.target.value)} aria-label="Search projects to pick" />
+            <FitPicker value={pfit} onChange={setPfit} />
+            {(() => {
+              const matches = openProjects.filter((p) => p.focus === planWeek || ((!pq || `${p.task} ${p.category}`.toLowerCase().includes(pq.toLowerCase())) && fits(projectSize(p), pfit)));
+              const shown = showAll || pq ? matches : matches.slice(0, 25);
+              return (<>
             <ul className="pick-list">
-              {openProjects.slice(0, 40).map((p) => {
+              {shown.map((p) => {
                 const on = p.focus === planWeek;
                 return (
                   <li key={p.id}>
                     <button type="button" aria-pressed={on} className={on ? "pick pick-on" : "pick"} onClick={() => act.setFocus(p, on ? null : planWeek)}>
                       <Check on={on} color={ink(p.lead === "both" ? me : p.lead)} />
-                      <span className="pick-text"><span>{p.task}</span><span className="soft small">{p.category}, {PRIORITY[p.priority].toLowerCase()} priority, {EFFORT[p.effort].toLowerCase()}</span></span>
+                      <span className="pick-text"><span>{p.task}</span><span className="soft small"><SizeTag size={projectSize(p)} /> {p.category}, {PRIORITY[p.priority].toLowerCase()} priority</span></span>
                       <OwnerMark owner={p.lead} size="sm" />
                     </button>
                   </li>
                 );
               })}
             </ul>
+            {shown.length < matches.length && (
+              <button type="button" className="btn-quiet" onClick={() => setShowAll(true)}>Show all {matches.length} open projects</button>
+            )}
+              </>);
+            })()}
           </>
         )}
       </div>
@@ -1442,7 +1557,6 @@ function CheckinSheet({ onClose }: { onClose: () => void }) {
 /* ============================================================= Projects */
 
 const PRIORITY = ["", "Highest", "High", "Medium", "Low", "Lowest"];
-const EFFORT = ["", "Hardest", "Hard", "Middle", "Easy", "Easiest"];
 const STATUS: Record<Status, string> = { todo: "To do", doing: "In progress", done: "Done" };
 
 function ProjectsView() {
@@ -1452,16 +1566,19 @@ function ProjectsView() {
   const [sort, setSort] = useState<"priority" | "easy" | "category">("priority");
   const [editing, setEditing] = useState<Project | null>(null);
   const [q, setQ] = useState("");
+  const [fit, setFit] = useFit("lc:pfit");
   const wk = weekKey(now);
   const list = data.projects.projects
+    .filter((p) => fits(projectSize(p), fit))
     .filter((p) => view === "done" ? p.status === "done" : view === "week" ? p.focus === wk && p.status !== "done" : p.status !== "done")
     .filter((p) => lead === "all" || p.lead === lead)
     .filter((p) => !q || `${p.task} ${p.category} ${p.notes ?? ""}`.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => {
       if (view !== "done" && a.status !== b.status) return a.status === "doing" ? -1 : 1;
-      if (sort === "easy") return b.effort - a.effort || a.priority - b.priority;
+      const sz = SIZE_WEIGHT[projectSize(a)] - SIZE_WEIGHT[projectSize(b)];
+      if (sort === "easy") return sz || a.priority - b.priority;
       if (sort === "category") return a.category.localeCompare(b.category) || a.priority - b.priority;
-      return a.priority - b.priority || b.effort - a.effort;
+      return a.priority - b.priority || sz;
     });
   const openCount = data.projects.projects.filter((p) => p.status !== "done" && isFor(p.lead, me)).length;
   const focusCount = data.projects.projects.filter((p) => p.focus === wk && p.status !== "done").length;
@@ -1476,16 +1593,17 @@ function ProjectsView() {
         <Segmented label="Lead" value={lead} onChange={setLead} options={[
           { value: "all", label: "All" }, { value: "grant", label: "Grant" }, { value: "cass", label: "Cass" }, { value: "both", label: "Together" },
         ]} />
+        <FitPicker value={fit} onChange={setFit} />
         <div className="toolbar">
           <input className="search" type="search" placeholder="Search projects" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search projects" />
           <label className="select"><span className="sr">Sort</span>
             <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
-              <option value="priority">Priority first</option><option value="easy">Easiest first</option><option value="category">By room</option>
+              <option value="priority">Priority first</option><option value="easy">Smallest first</option><option value="category">By room</option>
             </select>
           </label>
         </div>
       </header>
-      <button type="button" className="btn-add" onClick={() => setEditing({ id: uid("p"), task: "", category: "General", priority: 3, effort: 3, lead: me, status: "todo" })}>Add a project</button>
+      <button type="button" className="btn-add" onClick={() => setEditing({ id: uid("p"), task: "", category: "General", priority: 3, effort: 4, size: "M", lead: me, status: "todo" })}>Add a project</button>
       {list.length === 0 && <p className="empty">{view === "done" ? "Nothing finished yet." : view === "week" ? "No projects picked for this week. Pick some in the weekly check-in, or open a project and tap Pick for this week." : "No open projects match."}</p>}
       <ul className="projects">
         {list.map((p) => {
@@ -1495,7 +1613,7 @@ function ProjectsView() {
               <button type="button" className="project-main" onClick={() => setEditing(p)}>
                 <span className="project-title">{p.task}</span>
                 <span className="project-meta">
-                  <span>{p.category}</span><span>{PRIORITY[p.priority]} priority</span><span>{EFFORT[p.effort]}</span>
+                  <SizeTag size={projectSize(p)} /><span>{p.category}</span><span>{PRIORITY[p.priority]} priority</span>
                   {p.cost && <span>{p.cost}</span>}
                   {p.status === "doing" && <span className="tag-doing">In progress</span>}
                   {p.focus === wk && p.status !== "done" && <span className="tag-doing">This week</span>}
@@ -1527,14 +1645,15 @@ function ProjectSheet({ p, onClose }: { p: Project; onClose: () => void }) {
   const wk = weekKey(now);
   const live = data.projects.projects.find((x) => x.id === p.id);
   return (
-    <Sheet title={isNew ? "New project" : "Project"} onClose={onClose}>
+    <Sheet title={isNew ? "New project" : "Edit project"} onClose={onClose}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); if (f.task.trim()) { act.saveProject({ ...f, task: f.task.trim(), focus: live?.focus ?? f.focus }); onClose(); } }}>
         <label>What needs doing<input required value={f.task} onChange={(e) => set("task", e.target.value)} /></label>
         <label>Room or area<input list="cats" value={f.category} onChange={(e) => set("category", e.target.value)} />
           <datalist id="cats">{categories.map((c) => <option key={c} value={c} />)}</datalist></label>
         <div className="form-row">
           <label>Priority<select value={f.priority} onChange={(e) => set("priority", Number(e.target.value))}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{PRIORITY[n]}</option>)}</select></label>
-          <label>Effort<select value={f.effort} onChange={(e) => set("effort", Number(e.target.value))}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{EFFORT[n]}</option>)}</select></label>
+          <label>Size<select value={projectSize(f)} onChange={(e) => { const z = e.target.value as Size; setF((x) => ({ ...x, size: z, effort: effortFromSize[z] })); }}>
+            {SIZES.map((z) => <option key={z} value={z}>{z}: {SIZE_HINT[z]}</option>)}</select></label>
         </div>
         <div className="form-row">
           <label>Lead<select value={f.lead} onChange={(e) => set("lead", e.target.value as Owner)}><option value="grant">Grant</option><option value="cass">Cass</option><option value="both">Together</option></select></label>
@@ -1818,7 +1937,7 @@ function Editor({ onClose, startChore }: { onClose: () => void; startChore?: Cho
                 {items.map((c) => (
                   <li key={c.id}><button type="button" onClick={() => setEditing(c)}>
                     <span>{c.title}</span>
-                    <span className="soft">{[c.prn && "as needed", c.months?.length && monthRange(c.months), c.owner && `always ${NAME[c.owner]}`, EFFORT_NAME[effortOf(c)]].filter(Boolean).join("; ")}</span>
+                    <span className="soft">{[c.prn && "as needed", c.months?.length && monthRange(c.months), c.owner && `always ${NAME[c.owner]}`, `size ${choreSize(c)}`].filter(Boolean).join("; ")}</span>
                   </button></li>
                 ))}
               </ul>
@@ -1876,8 +1995,8 @@ function ChoreForm({ c, rooms, isNew, onSave, onDelete, onClose }: {
           </select>
         </label>
         <label>Size
-          <select value={effortOf(f)} onChange={(e) => set("effort", Number(e.target.value) as 1 | 2 | 3)}>
-            <option value={1}>Quick</option><option value={2}>Medium</option><option value={3}>Big</option>
+          <select value={choreSize(f)} onChange={(e) => setF((x) => { const y = { ...x, size: e.target.value as Size }; delete y.effort; return y; })}>
+            {SIZES.map((z) => <option key={z} value={z}>{z}: {SIZE_HINT[z]}</option>)}
           </select>
         </label>
         <label>Tip<input value={f.note ?? ""} placeholder="Products, where the supplies are" onChange={(e) => set("note", e.target.value)} /></label>
@@ -2011,6 +2130,8 @@ function App() {
   }, [data, rooms, now]);
   const act = useMemo(() => (data ? makeActions(data, me, mutate, toast) : null), [data, me, mutate, toast]);
 
+  const closePanel = useCallback(() => setPanel(null), []);
+
   if (setup) return <Setup initial={config} onDone={(c) => { saveConfig(c); setConfig(c); setSetup(false); }} />;
 
   const updateConfig = (c: Config | null) => { if (!c) { setPanel(null); setSetup(true); return; } saveConfig(c); setConfig(c); };
@@ -2041,8 +2162,8 @@ function App() {
           </main>
           {panel?.kind === "settings" && <SettingsSheet config={config} onConfig={updateConfig} onEdit={() => setPanel({ kind: "editor" })} onClose={() => setPanel(null)}
             zoom={zoom} setZoom={(z) => { setZoomState(z); lsSet("lc:zoom", z); }} />}
-          {panel?.kind === "editor" && <Editor startChore={panel.chore} onClose={() => setPanel(panel.chore ? null : { kind: "settings" })} />}
-          {panel?.kind === "chore" && <ChoreSheet choreId={panel.id} onClose={() => setPanel(null)} onEdit={(c) => setPanel({ kind: "editor", chore: c })} />}
+          {panel?.kind === "editor" && <Editor startChore={panel.chore} onClose={() => setPanel(panel.chore ? { kind: "chore", id: panel.chore.id } : { kind: "settings" })} />}
+          {panel?.kind === "chore" && <ChoreSheet choreId={panel.id} onClose={closePanel} onEdit={(c) => setPanel({ kind: "editor", chore: c })} />}
           {panel?.kind === "inbox" && <InboxSheet onClose={() => setPanel(null)} />}
           {panel?.kind === "checkin" && <CheckinSheet onClose={() => setPanel(null)} />}
         </AppCtx.Provider>
@@ -2218,6 +2339,22 @@ a { color: var(--me, #2457A6); }
 .lane-empty { margin: 0; padding: 2px 14px 12px; color: var(--ink-soft); font-size: 14px; }
 
 .tray-jump { justify-self: start; }
+.sheet-actions { display: flex; gap: 8px; }
+.size { display: inline-grid; place-items: center; min-width: 26px; height: 20px; padding: 0 5px; border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: .02em; border: 1px solid var(--rule); color: var(--ink-soft); background: var(--board); vertical-align: 1px; }
+.size-L { color: var(--ink); border-color: var(--ink-soft); }
+.size-XL { color: var(--board); background: var(--ink); border-color: var(--ink); }
+.fit { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }
+.fit-label { font-weight: 700; font-size: 14px; }
+.fit .seg button { padding: 6px 4px; font-size: 13px; }
+.link-row { width: 100%; display: flex; justify-content: space-between; gap: 12px; background: none; border: 0; padding: 4px 0; text-align: left; cursor: pointer; }
+.link-row .soft { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.load { display: grid; gap: 8px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px; }
+.load p { margin: 0; }
+.load-row { display: grid; grid-template-columns: 52px 1fr; gap: 4px 10px; align-items: center; }
+.load-row .small { grid-column: 2; }
+.load-bar { height: 8px; border-radius: 99px; background: var(--rule); overflow: hidden; }
+.load-bar span { display: block; height: 100%; border-radius: 99px; }
+.note-actions { display: flex; gap: 14px; }
 .since { width: 100%; display: grid; gap: 4px; text-align: left; background: var(--sheet); border: 2px solid var(--me); border-radius: var(--radius); padding: 14px; margin: 6px 0 10px; cursor: pointer; }
 .since-go { color: var(--me); font-weight: 700; }
 .since-checkin { border-style: dashed; }
@@ -2294,7 +2431,7 @@ a { color: var(--me, #2457A6); }
 .note-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .note { background: var(--sheet); border-left: 4px solid; border-radius: 0 10px 10px 0; padding: 8px 12px; display: grid; gap: 2px; }
 .note-by { font-family: "Kalam", cursive; font-size: 15px; }
-.note .link-btn { justify-self: start; font-size: 13px; color: var(--ink-soft); font-weight: 400; }
+.note .link-btn { font-size: 13px; color: var(--ink-soft); font-weight: 400; }
 
 .feed { list-style: none; margin: 0; padding: 8px 0; display: grid; gap: 8px; }
 .feed-item { background: var(--sheet); border-left: 4px solid; border-radius: 0 10px 10px 0; padding: 10px 12px; display: grid; gap: 4px; }

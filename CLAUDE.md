@@ -14,11 +14,11 @@ A household chore and project app for Grant and Cass. It's a static React 19 + T
 
 | File | Shape |
 |---|---|
-| `house.json` | `{rooms: Room[], chores: Chore[]}`. A room has `zone` A/B/shared for rotation, `fixedOwner` for keep-rooms mode, and `pinned` to never rotate. A chore has `freq` weekly/monthly/seasonal, `months` (seasonal only), `prn` (as needed), an optional permanent `owner`, optional `zone`/`fixedOwner` to split one room's chores between people, `months` (also allowed on weekly/monthly chores to limit them to a season, e.g. mowing), `standard` ("done means", plus `standardBy`/`standardAt`), and `effort` 1–3. |
+| `house.json` | `{rooms: Room[], chores: Chore[]}`. A room has `zone` A/B/shared for rotation, `fixedOwner` for keep-rooms mode, and `pinned` to never rotate. A chore has `freq` weekly/monthly/seasonal, `months` (seasonal only), `prn` (as needed), an optional permanent `owner`, optional `zone`/`fixedOwner` to split one room's chores between people, `months` (also allowed on weekly/monthly chores to limit them to a season, e.g. mowing), `standard` ("done means", plus `standardBy`/`standardAt`), and `size` S/M/L/XL (old data may have `effort` 1–3; always read through `choreSize()`). |
 | `settings.json` also has | `colors[person]` (ink id from `INKS`) and `lastCheckin {at, by, week}` |
 | `settings.json` | `mode` rotate/fixed, `rotation.anchorWeek`/`anchorMonth`/`zoneAStarts` |
 | `log.json` | `done["<period>|<choreId>"] = {by, at}`. Period is `W<monday yyyy-mm-dd>` or `M<yyyy-mm>`. Pruned after 400 days. |
-| `projects.json` | `projects: Project[]`. Priority 1 = highest, effort 1 = hardest, `lead` grant/cass/both, `status` todo/doing/done. |
+| `projects.json` | `projects: Project[]`. Priority 1 = highest, `size` S/M/L/XL (falls back to the sheet's `effort`, where 1 = hardest; always read through `projectSize()`), `lead` grant/cass/both, `status` todo/doing/done. |
 | `lists.json` | `lists: {id, name, items: {id, text, done, by, at}[]}[]` |
 | `plans.json` | `items["<period>|<choreId>"] = {day?, dayBy?, owner?, skip?: {by, reason, at}}`. `owner` = covering for that period (accepted hand-off or "I'll do it"). Pruned after 120 days. |
 | `activity.json` | `items: Activity[]`, where `kind` is note/request/kudos/nudge/skip/standard/took/checkin. `ref` = `{type: chore|project|item, id, title, period?}`. Requests have `status` open/accepted/declined and `permanent`. Pruned after 180 days, except open requests. |
@@ -34,6 +34,7 @@ A per-period plan `owner` (a trade) comes first, then the chore's `owner`. Next,
 - All mutations live in `makeActions()`. Each one calls `toast(text, undo)` so the user can undo, and undo is just another idempotent set.
 - Chore rows have two targets: the checkbox toggles done, and the title opens `ChoreSheet` (plan, standard, size, hand-off, skip, notes).
 - The inbox feed is derived from `activity` plus recent `log` check-offs and finished projects. "Seen" is per device, in localStorage.
+- Sizes are weighted S1 M2 L4 XL8 (`SIZE_WEIGHT`), and they drive the balance, the check-in load and the "I have…" filter (`fits()`).
 - The person using a phone is `me`. Their color is `var(--me)`, and each person's is `var(--grant)`/`var(--cass)`.
 - Cass is particular about polish. Keep copy plain, give buttons verbs, never leave a dead end, and only ask for confirmation when nothing can undo the action.
 

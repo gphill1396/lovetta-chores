@@ -18,6 +18,8 @@ Chores, house projects and shared lists for Grant and Cass at Lovetta.
 - **Inbox**: requests, notes, thank-yous, skips and what the other person finished, with an unread badge.
 - **Weekly check-in**: shows up on Sunday through Tuesday. It covers how last week went, open requests, who does which rooms, and which projects to take on this week.
 - **Projects** and **Lists**: the House To-Do and shared lists, with notes and a "this week" pick.
+- **Sizes**: every chore and project is S (15 min or less), M (15–60 min), L (1–4 hours) or XL (a day or a weekend). The **I have…** picker on Today and Projects shows only what fits the time you have. The effort balance counts S as 1 point, M 2, L 4 and XL 8, and the check-in shows each person's load for the week.
+- **Edit any card**: tap a chore and use Edit in the top corner. Projects and list items open straight into an editable card. You can edit or delete your own notes.
 - **Undo** after every action. Each person picks their own ink color, and there's a text-size setting.
 
 There are no push notifications: a static site has no server to send them. The inbox badge and the "since you last looked" card cover that, and the app refreshes every 30 seconds while it's open.
