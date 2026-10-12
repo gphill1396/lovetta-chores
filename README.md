@@ -4,32 +4,42 @@ Chores, house projects and shared lists for Grant and Cass at Lovetta.
 
 **App:** https://gphill1396.github.io/lovetta-chores/
 
-- **Week / Month**: chores by room, filtered to you. Check one off and the other person sees it in your ink (Grant blue, Cass oxblood). "As needed" chores have dashed boxes and don't count toward progress.
-- **Seasons**: furnace filter, gutters, hoses, firewood and so on, due by month, plus what's coming up.
-- **Projects**: the House To-Do sheet, with lead, priority, effort, cost and notes.
-- **Lists**: Restock & refill, Lowe's cart, and any list you add.
-- **Settings**: take turns (sides of the house swap every Monday) or keep rooms (permanent until you switch back); edit rooms and chores.
+- **Today**: just your plate: what's planned today, anything left from earlier in the week, requests from the other person, and a "since you last looked" card.
+- **Week**: a Mon–Sun plan you both share. Tap any chore to give it a day. Progress bars and an effort balance for the month sit at the top.
+- **Chores**: every chore by room, as Weekly, Monthly or Seasonal.
+- **Tap any chore** to:
+  - mark it done
+  - pick a day
+  - agree on what **done means**
+  - set its size (quick, medium, big)
+  - **ask the other person to take it** (this week or from now on), take theirs, or send a reminder
+  - **skip it** with a reason
+  - leave **notes**
+- **Inbox**: requests, notes, thank-yous, skips and what the other person finished, with an unread badge.
+- **Weekly check-in**: shows up on Sunday through Tuesday. It covers how last week went, open requests, who does which rooms, and which projects to take on this week.
+- **Projects** and **Lists**: the House To-Do and shared lists, with notes and a "this week" pick.
+- **Undo** after every action. Each person picks their own ink color, and there's a text-size setting.
+
+There are no push notifications: a static site has no server to send them. The inbox badge and the "since you last looked" card cover that, and the app refreshes every 30 seconds while it's open.
 
 ## How it's put together
 
 | Repo | Visibility | Holds |
 |---|---|---|
 | `gphill1396/lovetta-chores` (this one) | Public | The app code. Pushing to `main` rebuilds the site. |
-| `gphill1396/lovetta-chores-data` | Private | `data/*.json`: chores, check-offs, projects, lists, settings. |
+| `gphill1396/lovetta-chores-data` | Private | `data/*.json`: chores, check-offs, plans, messages, projects, lists, settings. |
 
-The app reads and writes the private data repo with each person's own GitHub token, which stays on their phone. Every check-off is a commit, so the data repo doubles as a history of who did what.
+The app reads and writes the private data repo with the household key, which stays on each phone. Every check-off is a commit, so the data repo doubles as a history of who did what.
 
 ## Setting up a phone
 
-**Cass first needs a GitHub account and an invite.** Grant: in `lovetta-chores-data`, go to Settings → Collaborators → Add people, then add Cass. She accepts the email invite. (Do the same on `lovetta-chores` if she'll edit the code.)
+Both phones use the same "household key" (Grant's fine-grained GitHub token). Cass doesn't need a GitHub account.
 
-Then, on each phone:
-
-1. Make a token. GitHub only lets fine-grained tokens reach repos you own, so the steps differ:
-   - **Grant:** go to <https://github.com/settings/personal-access-tokens/new>. Repository access: only `lovetta-chores-data`. Permissions: **Contents, read and write**.
-   - **Cass:** go to <https://github.com/settings/tokens/new> (classic token). Check the **repo** scope.
-   - For either, set the expiration as long as GitHub allows, and set a calendar reminder to renew it.
-2. Open the app, pick your name, paste the token, and tap **Connect**.
+1. Grant makes the key at <https://github.com/settings/personal-access-tokens/new>:
+   - Repository access: only `lovetta-chores-data`
+   - Permissions: **Contents, read and write**
+   - Expiration: as long as GitHub allows
+2. On each phone, open the app, pick your name, paste the key, and tap **Connect**. The app tracks who did what by the name you pick, not by the key.
 3. Add it to your Home Screen (Safari: Share → Add to Home Screen) so it opens like an app.
 
 ## Changing things
